@@ -1,0 +1,14 @@
+
+# Gradle
+.gradle/
+**/build/
+
+# IDE
+.idea/
+.vscode/
+
+# 系统
+.DS_Store
+
+# 日志
+*.log

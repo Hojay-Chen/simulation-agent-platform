@@ -1,1 +1,78 @@
-# simulation-agent-platform
+# simulation-agent-platform — 仿真 Agent 平台（仓 2）
+
+> 数字人的全部认知 / 生活 / 记忆 / 状态。它消费仓 1（[chat-platform](../chat-platform)）
+> 发布的契约 artifact，通过 SPI 端口看聊天世界与应用世界 —— 不认识任何一个的具体实现。
+> 由 companion-agent 物理拆分而来（G1 = 仓 1 Gradle 化，G2 = 本仓骨架 + DH 迁入）。
+
+---
+
+## 1. 两个服务（用户拍板的形态）
+
+| 服务 | 目录 | 端口 | 职责 |
+|---|---|---|---|
+| **功能服务** | `server/` | 8091 | 拉起数字人全部认知链（41 个顶层包 + 40+ 定时任务），`SimulationAgentPlatformApplication` |
+| **对外 OpenAPI 服务** | `openapi/` | 8092 | 供外部/三方创建、删除、管理、使用自己的仿真 agent。G2 为骨架（健康端点），业务端点 = G4 |
+
+两个启动类在各自项目目录下，不共用 —— 这是拆分的显式表达。
+
+## 2. Gradle 多项目布局
+
+```
+settings.gradle            rootProject + include
+build.gradle               版本口径: Spring Boot 2.7.18 / JDK 17 / mavenLocal + 阿里云
+common/                    仓 2 公共件(kernel 类随迁, 见 §4)
+backend/digital-human-platform/   DH 主体 —— 41 顶层包原样迁入
+                           (目录名不改是 git log --follow 穿历史的硬前提)
+server/                    功能服务(bootJar: simulation-agent-platform-1.0.0.jar)
+openapi/                   对外 API 服务(bootJar: simulation-agent-openapi-1.0.0.jar)
+scripts/check-agent.sh     边界守卫(grep 第一道防线)
+```
+
+Java 包名保持 `com.luxera.companion.*`（与仓 1 同一哲学：改包名零收益纯风险，拆分在 Gradle 项目边界与仓库边界上表达）。
+
+## 3. 对外认知只有两条
+
+- **契约 artifact**：`com.luxera:contract:1.0.0`（仓 1 执行 `gradle :contract:publishToMavenLocal` 发布）。`ChatWorldPort` / `ApplicationRuntimePort` / `SimulatorAccessPort` / `CompanionDirectoryPort` 等 SPI 端口与 `MessageView` 等 DTO 全部在那里 —— 本仓对 chat 世界与 LAP 的全部认知止于此。
+- **本仓 common**：User/UserRepository（只读昵称）/AppProperties/CurrentUser/BusinessException/JsonCodec/3 个 Converter/Outbox 三件（消费侧）。
+
+G2→G3 过渡期，三个跨服务端口由 `digitalhuman/integration/ChatPlatformIntegration` 的占位实现兜底（读返回空、写诚实抛错、fire-and-forget 静默）——与仓 1 `AgentPlatformIntegration` 的占位哲学对称。G3 落地 HTTP 适配器后占位自动退位（`@ConditionalOnMissingBean`）。
+
+## 4. 与仓 1 的关系
+
+| 维度 | 约定 |
+|---|---|
+| 契约 | 仓 1 `contract` 项目 publishToMavenLocal → 本仓当普通外部依赖 |
+| 数据库 | 同一个 PG `companion` 库；表不重叠、跨仓无 FK；`users` 表仓 1 写 / 本仓只读；`outbox_event` 仓 1 写 / 本仓 `OutboxRelayJob` 消费（跨进程可靠通道） |
+| 服务发现 | 功能服务 8091（仓 1 yml `app.agent-platform.base-url` 默认值）；openapi 8092 |
+| 服务间密钥 | `app.agent-platform.internal-service-key` 两仓注入同一值（G3 起用） |
+| 实时通道 | DHCP v1 WebSocket：本仓 `ChatSimulatorConnector`(客户端) → 仓 1 `/ws/simulator`(服务端)，`app.simulator.chat-ws-url` 指向 8081 |
+| git 历史 | ours-merge 嫁接：本仓保有 companion-agent → chat-platform 全部提交链，`git log --follow` 可穿到单体时代（DH 路径名不变是硬前提） |
+
+## 5. 构建与验证
+
+```bash
+# 前置(仓 1): cd chat-platform && gradle :contract:publishToMavenLocal
+bash scripts/check-agent.sh          # 边界守卫
+~/tools/gradle/gradle-8.14.3/bin/gradle test      # 309 测试(DH 全量 + common/server/openapi)
+~/tools/gradle/gradle-8.14.3/bin/gradle :server:bootJar :openapi:bootJar
+java -jar server/build/libs/simulation-agent-platform-1.0.0.jar    # 8091
+java -jar openapi/build/libs/simulation-agent-openapi-1.0.0.jar    # 8092
+```
+
+测试用隔离的 `companion_test` 库（`application-test.yml` 随迁），与仓 1 测试库共用 —— 两仓测试串行跑。
+
+## 6. 边界守卫（check-agent.sh）
+
+1. **包归属互斥**：四个 Gradle 项目拥有的顶层包两两不相交（Java split package 会静默合并）；
+2. **DH 不引用仓外世界**：DH 源码里的 `com.luxera.companion.*` import 只允许 `contracts` 与本仓四项目拥有的包（白名单从源码树推导，不写死）；
+3. **common 不认识 DH**：底座不引用使用者的包；
+4. **Gradle 依赖图**：server→{common,digital-human}、digital-human→common、common 零仓内依赖（只依赖 contract artifact）、openapi 骨架期零 DH 依赖（G4 按需引入）。
+
+## 7. 路线图（用户拍板的分轮）
+
+**G1 仓 1 Gradle 化 → G2 仓 2 骨架+DH 迁移（本轮，已完成）→ G3 跨服务 HTTP 化 → G4 OpenAPI 服务 → G5 聊天前端 → G6 Agent 管理前端 → G7 联调部署。**
+
+- **G3**：chat 侧删 `AgentPlatformIntegration` 占位、落 `HttpCompanionDirectoryAdapter`；本仓删 `ChatPlatformIntegration` 占位、落三个端口的 HTTP 客户端适配器（同一 `internal-service-key` 体系）；`check-split.sh` 两服务同起验收。
+- **G4**：openapi 服务的业务端点（REST + API Key + OpenAPI 3.1 spec + springdoc `/docs`）。
+- **G5/G6**：两套全新前端（聊天 = 现代 IM 风 + 应用 + agent 好友；仿真 = agent 创建/管理/使用控制台）。
+- **G7**：nginx 分流 + 联调部署。

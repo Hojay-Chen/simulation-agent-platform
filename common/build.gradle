@@ -1,0 +1,22 @@
+// common —— 仓 2 公共件（仿真 Agent 平台自己的 kernel）。
+//
+// 与仓 1 的 common 是**拷贝不剪切**关系: G2 拆分时 DH 侧用到的 kernel 类
+// (User/UserRepository/BusinessException/JsonCodec/3 个 Converter/AppProperties/
+// CurrentUser/Outbox 三件) 随 digital-human-platform 迁入本仓, 两边从此各自演化。
+//
+// 内容按业务分目录(用户拍板的组织方式); 仓 2 当前只有仿真 agent 一个业务,
+// 这些类本身业务无关, 先单层起步, 未来多业务时再在包内分目录。
+//
+// 边界:
+//   - users 表归仓 1(chat 平台)写; 本仓的 User/UserRepository 只服务
+//     PersonService 读用户昵称(只读用途)。
+//   - outbox_event 是跨进程通道: chat 写(用户消息兜底), 本仓的
+//     OutboxRelayJob 消费 —— OutboxPublisher/Repository 在这边是消费侧。
+
+dependencies {
+    api 'com.luxera:contract:1.0.0'
+    api 'org.springframework.boot:spring-boot-starter-web'
+    api 'org.springframework.boot:spring-boot-starter-data-jpa'
+    implementation 'org.springframework.boot:spring-boot-starter-security'
+    testImplementation 'org.springframework.boot:spring-boot-starter-test'
+}

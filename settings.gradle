@@ -1,0 +1,21 @@
+// simulation-agent-platform — 仓 2（仿真 Agent 平台）。
+//
+// 多项目布局（G2 物理拆分）:
+//   backend/digital-human-platform/   数字人/仿真 Agent 主体 —— 41 个顶层包原样迁入
+//                                    （路径名保持不变是 git log --follow 穿历史的硬前提）
+//   common/                          仓 2 公共件 —— DH 侧用到的 kernel 类随迁
+//                                    (auth/config/common/outbox), 包名不动
+//   server/                          仿真 Agent 功能服务（第 1 个服务, 端口 8091）
+//   openapi/                         对外 OpenAPI 服务（第 2 个服务, 端口 8092）
+//
+// 契约先行: 本仓消费仓 1(chat-platform) 的 contract artifact
+// （com.luxera:contract:1.0.0, 由仓 1 `gradle :contract:publishToMavenLocal` 发布）。
+// ChatWorldPort / ApplicationRuntimePort / CompanionDirectoryPort 等 SPI 端口
+// 都在 contract 里 —— 本仓对 chat 世界的全部认知止于此。
+
+rootProject.name = 'simulation-agent-platform'
+
+include 'common', 'openapi', 'server'
+// DH 主体沿用历史目录名（V10 时代的 backend/digital-human-platform）
+include 'digital-human'
+project(':digital-human').projectDir = file('backend/digital-human-platform')

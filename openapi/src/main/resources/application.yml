@@ -1,0 +1,32 @@
+# 对外 OpenAPI 服务配置 —— 仓 2 的第 2 个服务（G2 骨架）。
+#
+# G2 只带最小可启动面; 对外 API 的业务配置(api-key 体系/springdoc)由 G4 填充。
+server:
+  port: 8092
+  servlet:
+    context-path: /
+
+spring:
+  application:
+    name: simulation-agent-openapi
+
+  datasource:
+    url: jdbc:postgresql://127.0.0.1:5432/companion
+    username: admin
+    password: shared-secret
+    driver-class-name: org.postgresql.Driver
+
+  jpa:
+    hibernate:
+      ddl-auto: update
+    show-sql: false
+    open-in-view: false
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.PostgreSQL10Dialect
+        jdbc.time_zone: Asia/Shanghai
+
+app:
+  jwt:
+    secret: ${JWT_SECRET:luxera-companion-platform-dev-secret-change-me-0123456789abcdef}
+    expiration-ms: ${JWT_EXPIRATION_MS:604800000}

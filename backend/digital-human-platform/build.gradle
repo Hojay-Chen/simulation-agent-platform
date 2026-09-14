@@ -1,0 +1,34 @@
+// digital-human —— 仿真 Agent 平台主体（数字人的全部认知/生活/记忆/状态）。
+//
+// 41 个顶层包(persona/memory/life/emotion/runtime/...)原样迁自仓 1
+// backend/digital-human-platform, 包名 com.luxera.companion.* 不动。
+// 目录名保持 backend/digital-human-platform 是 git log --follow 穿历史的硬前提。
+//
+// 对外认知只有两条:
+//   - contract artifact(仓 1 发布的 com.luxera:contract:1.0.0):
+//     ChatWorldPort / ApplicationRuntimePort / SimulatorAccessPort / MessageView 等;
+//   - 本仓 common: kernel 类(User/AppProperties/Outbox 等)。
+// 不认识 chat / application 的任何实现类 —— 这条由 scripts/check-agent.sh 守卫。
+//
+// 启动由 server(功能服务)与 openapi(对外 API 服务)两个项目拉起, 本项目是纯 library。
+
+dependencies {
+    api project(':common')
+
+    implementation 'org.springframework.boot:spring-boot-starter-web'
+    implementation 'org.springframework.boot:spring-boot-starter-websocket'
+    implementation 'org.springframework.boot:spring-boot-starter-data-jpa'
+    implementation 'org.springframework.boot:spring-boot-starter-security'
+    implementation 'org.springframework.boot:spring-boot-starter-validation'
+    implementation 'org.springframework.boot:spring-boot-starter-webflux'
+    runtimeOnly 'org.postgresql:postgresql'
+
+    testImplementation 'org.springframework.boot:spring-boot-starter-test'
+    testImplementation 'com.tngtech.archunit:archunit-junit5'
+    testRuntimeOnly 'org.postgresql:postgresql'
+}
+
+// DH 的测试资源(applications/ 探针 manifest)与主资源同名合并沿用 Exclude 语义
+tasks.withType(Copy).configureEach {
+    duplicatesStrategy = DuplicatesStrategy.EXCLUDE
+}

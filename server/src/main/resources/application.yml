@@ -1,0 +1,141 @@
+# 仿真 Agent 功能服务配置 —— 仓 2 的第 1 个服务（G2 起）。
+#
+# 原 companion 单体 application.yml 在 G1 拆分时裁成两半: 聊天/应用侧 key 留在
+# 仓 1(chat) 的 yml, 数字人侧 key（llm/embedding/agent/scheduler/proactive/simulator）
+# 由本文件承接。两边各自只声明自己消费的东西。
+server:
+  port: 8091
+  servlet:
+    context-path: /
+
+spring:
+  application:
+    name: simulation-agent-platform
+
+  datasource:
+    url: jdbc:postgresql://127.0.0.1:5432/companion
+    username: admin
+    password: shared-secret
+    driver-class-name: org.postgresql.Driver
+
+  jpa:
+    hibernate:
+      ddl-auto: update
+    show-sql: false
+    open-in-view: false
+    properties:
+      hibernate:
+        format_sql: true
+        dialect: org.hibernate.dialect.PostgreSQL10Dialect
+        jdbc.time_zone: Asia/Shanghai
+
+  jackson:
+    time-zone: Asia/Shanghai
+    date-format: yyyy-MM-dd HH:mm:ss
+    default-property-inclusion: non_null
+
+  task:
+    execution:
+      thread-name-prefix: agent-async-
+      pool:
+        core-size: 4
+        max-size: 12
+        queue-capacity: 200
+
+# ── 业务配置（仿真 Agent 侧消费的子集） ────────────────────────
+app:
+  # 认证: JWT 密钥与仓 1 同源(users 表共享, PersonService 读用户昵称经 JWT
+  # 解析主体; 校验逻辑与 chat 相同的 secret 才能认同一个 token)
+  jwt:
+    secret: ${JWT_SECRET:luxera-companion-platform-dev-secret-change-me-0123456789abcdef}
+    expiration-ms: ${JWT_EXPIRATION_MS:604800000}   # 7 天
+
+  # LLM 网关: openai-compatible | anthropic | mock
+  # 默认 DeepSeek(OpenAI 兼容); 未配置 api-key 时自动降级 Mock,保证离线可跑通全流程
+  llm:
+    provider: ${LLM_PROVIDER:openai-compatible}
+    base-url: ${LLM_BASE_URL:https://api.deepseek.com}
+    api-key: ${DEEPSEEK_API_KEY:}
+    chat-model: ${LLM_CHAT_MODEL:deepseek-chat}
+    temperature: 0.9
+    structured-temperature: 0.3
+    max-tokens: 2048
+    purpose:
+      summary:
+        model: ${LLM_CHAT_MODEL:deepseek-chat}
+        temperature: 0.2
+      application:
+        model: ${LLM_CHAT_MODEL:deepseek-chat}
+        temperature: 0.3
+    timeout-seconds: ${LLM_TIMEOUT_SECONDS:120}
+    mock-fallback: ${LLM_MOCK_FALLBACK:true}
+
+  # 记忆向量(PostgreSQL + pgvector; 未配 key 时自动回退结构化排序)
+  embedding:
+    base-url: ${EMBEDDING_BASE_URL:https://api.siliconflow.cn/v1}
+    api-key: ${EMBEDDING_API_KEY:}
+    model: ${EMBEDDING_MODEL:BAAI/bge-large-zh-v1.5}
+    dimension: ${EMBEDDING_DIMENSION:1024}
+
+  # Agent 运行时
+  agent:
+    intent-extraction: ${INTENT_EXTRACTION:llm}   # heuristic | llm (LLM 感知精炼)
+    memory-top-n: 12                   # 上下文注入的记忆条数
+    context-max-tokens: 12000
+    recent-messages: 20                # 注入的最近消息数
+    memory-min-strength: 0.02          # 检索最低强度阈值
+    working-memory-ttl-minutes: 720    # 会话工作记忆 TTL
+
+  # 定时任务(验收时可手动触发 /api/admin/.../run)
+  scheduler:
+    daily-reflection-cron: 0 17 3 * * *
+    weekly-reflection-cron: 0 0 5 * * MON
+    proactive-cron: 0 */15 * * * *
+    birthday-cron: 0 5 8 * * *
+    # 生命内核
+    life-tick-cron: 0 */10 * * * *       # 生活推进
+    thought-maintenance-cron: 0 */30 * * * *
+    emotion-maintenance-cron: 0 45 * * * *
+    open-loop-cron: 0 */15 * * * *
+    memory-consolidation-cron: 0 0 4 * * *
+    # 事件模拟 / 已读未回复查(复查已在 Job 内固定每分钟)
+    event-simulation-cron: 0 */30 * * * *
+    # 会话线程衰减(ACTIVE/PAUSED → RESUMABLE → ABANDONED)
+    thread-maintenance-cron: 0 */20 * * * *
+    # 未完成想法激活检查
+    unfinished-thought-cron: 0 */15 * * * *
+    # 睡眠模型推进(Coarse Tick, 每2分钟)
+    sleep-tick-cron: 0 */2 * * * *
+    # 行为 Tick(每5分钟) — 中央行为选择器
+    behavior-tick-cron: 0 */5 * * * *
+    # 手机通知生命周期推进
+    phone-tick-cron: 0 * * * * *
+    # 排程动作轮询(默认每 20 秒)
+    scheduled-action-cron: '*/20 * * * * *'
+    # 已读未回复复查(默认每分钟)
+    pending-recheck-cron: '0 */1 * * * *'
+    # 记忆衰减归档(默认周一 04:30)
+    memory-decay-cron: '0 30 4 * * MON'
+    # V10 Outbox 可靠发布轮询(默认每 5 秒) — 消费仓 1(chat)写入的兜底事件
+    outbox-relay-cron: '*/5 * * * * *'
+    # V10 生活事件时间触发(默认每 20 秒)
+    life-schedule-cron: '*/20 * * * * *'
+    # V10 关系事实与 Reality 核对(默认每日 04:00)
+    relationship-projection-cron: '0 0 4 * * *'
+
+  # 主动消息打断控制
+  proactive:
+    dnd-start-hour: 23                 # Do Not Disturb 起始(23:00)
+    dnd-end-hour: 8                    # 结束(08:00)
+    min-interval-hours: 1              # 两次主动消息最小间隔(小时)
+    max-notifications-per-day: 5
+
+  # V10 §63 Simulator(DHCP) 配置
+  simulator:
+    token-secret: ${SIMULATOR_TOKEN_SECRET:luxera-simulator-dhcp-v1-dev-secret-change-me}
+    token-ttl-seconds: 300
+    pairing-code-ttl-minutes: 10
+    # 连接仓 1 chat 平台的 WS 地址(跨进程; G1 起两服务分离)
+    chat-ws-url: ${CHAT_WS_URL:ws://127.0.0.1:8081/ws/simulator}
+    # 数据面走 WS 而非进程内直调 —— 两进程分离后这是唯一实时通道
+    backend: websocket

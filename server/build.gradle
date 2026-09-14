@@ -1,0 +1,32 @@
+// server —— 仿真 Agent 功能服务（第 1 个服务, 端口 8091）。
+//
+// 用户拍板: 仿真 Agent 平台有两个服务 —— 功能服务(本项目, 拉起数字人全部认知链)
+// 与对外 OpenAPI 服务(openapi 项目, 供三方创建/删除/管理/使用自己的仿真 agent)。
+// 两者的启动类都在各自项目目录下, 不共用。
+//
+// 对外端口 8091 与仓 1 chat yml 的 app.agent-platform.base-url 默认值对齐。
+
+plugins {
+    id 'org.springframework.boot'
+}
+
+dependencies {
+    implementation project(':common')
+    implementation project(':digital-human')
+
+    implementation 'org.springframework.boot:spring-boot-starter-web'
+    implementation 'org.springframework.boot:spring-boot-starter-websocket'
+    implementation 'org.springframework.boot:spring-boot-starter-data-jpa'
+    implementation 'org.springframework.boot:spring-boot-starter-security'
+    implementation 'org.springframework.boot:spring-boot-starter-validation'
+    runtimeOnly 'org.postgresql:postgresql'
+
+    testImplementation 'org.springframework.boot:spring-boot-starter-test'
+    testRuntimeOnly 'org.postgresql:postgresql'
+}
+
+bootJar {
+    archiveBaseName = 'simulation-agent-platform'
+    archiveVersion = '1.0.0'
+    mainClass = 'com.luxera.agentserver.SimulationAgentPlatformApplication'
+}

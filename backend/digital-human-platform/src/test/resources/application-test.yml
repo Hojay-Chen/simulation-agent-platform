@@ -1,0 +1,62 @@
+# 测试配置: 使用隔离的 companion_test 数据库, 避免干扰运行中的服务。
+spring:
+  datasource:
+    url: jdbc:postgresql://127.0.0.1:5432/companion_test
+    username: admin
+    password: shared-secret
+    # 限制测试连接池: 多个 @SpringBootTest context 各建池, 避免超过 PG max_connections
+    hikari:
+      maximum-pool-size: 5
+      minimum-idle: 1
+      connection-timeout: 30000
+  jpa:
+    hibernate:
+      ddl-auto: update
+
+app:
+  # 认证: 模块测试独立启动时需要(kernel 的 JwtUtil 无默认值)
+  jwt:
+    secret: companion-module-test-secret-0123456789abcdef
+    expiration-ms: 604800000
+
+  # 测试一律走 Mock LLM(环境变量有 key 也不打真 LLM)
+  llm:
+    provider: mock
+  scheduler:
+    daily-reflection-cron: 0 0 0 1 1 *
+    weekly-reflection-cron: 0 0 0 1 1 *
+    proactive-cron: 0 0 0 1 1 *
+    birthday-cron: 0 0 0 1 1 *
+    life-tick-cron: 0 0 0 1 1 *
+    thought-maintenance-cron: 0 0 0 1 1 *
+    emotion-maintenance-cron: 0 0 0 1 1 *
+    open-loop-cron: 0 0 0 1 1 *
+    memory-consolidation-cron: 0 0 0 1 1 *
+    event-simulation-cron: 0 0 0 1 1 *
+    thread-maintenance-cron: 0 0 0 1 1 *
+    unfinished-thought-cron: 0 0 0 1 1 *
+    sleep-tick-cron: 0 0 0 1 1 *
+    phone-tick-cron: 0 0 0 1 1 *
+    scheduled-action-cron: 0 0 0 1 1 *
+    pending-recheck-cron: 0 0 0 1 1 *
+    memory-decay-cron: 0 0 0 1 1 *
+    outbox-relay-cron: 0 0 0 1 1 *
+    life-schedule-cron: 0 0 0 1 1 *
+    relationship-projection-cron: 0 0 0 1 1 *
+    behavior-tick-cron: 0 0 0 1 1 *
+    # LAP v1 幂等调用回收 —— 测试里必须钉死, 否则 context 启动后会真的每 5 分钟扫一次库
+    invocation-reaper-cron: 0 0 0 1 1 *
+
+  # V10 §5 测试环境关闭拟人化层(单测断言预期原始输出, 不带错字/犹豫后缀)
+  v10:
+    human-likeness:
+      typing-rhythm: false
+      typos: false
+      hesitation: false
+      memory-drift: false
+      physio-filter: false
+      persona-voice: false
+      persona-fingerprint: false
+    hotpath:
+      enabled: false
+      shadow: false

@@ -1,0 +1,30 @@
+// openapi —— 对外 OpenAPI 服务（第 2 个服务, 端口 8092）。
+//
+// 用户拍板: 仿真 Agent 平台对外提供的 openapi 与规则(三方创建/删除/管理/使用
+// 自己的仿真 agent)从平台主体独立出来, 单独构建单独运行。
+// G2 先立骨架(启动类 + 健康端点 + 同库数据面); 业务端点 = G4。
+
+plugins {
+    id 'org.springframework.boot'
+}
+
+dependencies {
+    // G2 骨架只依赖 common(同库数据面 + kernel 类)。digital-human 的认知链
+    // (40+ @Scheduled job / LLM / 事件路由)不进本服务 —— 对外 API 的业务端点
+    // (G4)接入时再按需引入, 而不是先把整个认知引擎拉起来。
+    implementation project(':common')
+
+    implementation 'org.springframework.boot:spring-boot-starter-web'
+    implementation 'org.springframework.boot:spring-boot-starter-data-jpa'
+    implementation 'org.springframework.boot:spring-boot-starter-security'
+    implementation 'org.springframework.boot:spring-boot-starter-validation'
+    runtimeOnly 'org.postgresql:postgresql'
+
+    testImplementation 'org.springframework.boot:spring-boot-starter-test'
+}
+
+bootJar {
+    archiveBaseName = 'simulation-agent-openapi'
+    archiveVersion = '1.0.0'
+    mainClass = 'com.luxera.agentopenapi.AgentOpenApiApplication'
+}
