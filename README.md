@@ -73,7 +73,7 @@ java -jar openapi/build/libs/simulation-agent-openapi-1.0.0.jar    # 8092
 
 ## 7. 路线图（用户拍板的分轮）
 
-**G1 仓 1 Gradle 化 → G2 仓 2 骨架+DH 迁移 ✅ → G3 跨服务 HTTP 化 ✅ → G4 OpenAPI 服务 ✅ → G5 聊天前端 → G6 Agent 管理前端 → G7 联调部署。**
+**G1 仓 1 Gradle 化 → G2 仓 2 骨架+DH 迁移 ✅ → G3 跨服务 HTTP 化 ✅ → G4 OpenAPI 服务 ✅ → G5 聊天前端 ✅ → G6 Agent 管理前端 → G7 联调部署。**
 
 - **G3（2026-09-15 完成）**：本仓 `ChatPlatformIntegration` 占位删除、三个端口
   （ChatWorldPort/ApplicationRuntimePort/SimulatorAccessPort）落 HTTP 客户端适配器
