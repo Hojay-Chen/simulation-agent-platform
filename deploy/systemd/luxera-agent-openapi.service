@@ -1,0 +1,41 @@
+# 仿真 Agent 平台 —— 对外 OpenAPI 服务 (8092)。
+#
+# 安装: sudo cp deploy/systemd/luxera-agent-openapi.service /etc/systemd/system/
+#       sudo systemctl daemon-reload && sudo systemctl enable --now luxera-agent-openapi
+#
+# 与 8091 的差别只在启动类与堆: 这个进程只扫 persona 闭包薄件
+# (见 openapi 的 OpenApiSecurityConfig 与启动类 includeFilters), 不拉认知链,
+# 所以它轻得多 —— 但**没有它, G6 控制台与三方 OpenAPI 产品就整个不可用**。
+#
+# OPENAPI_ADMIN_KEY 在 /etc/agent-platform/.env。为空会让管理面变成 503 死端点
+# (设计如此: 宁可明确拒服务, 也不要一个没有前门的发钥匙接口)。
+[Unit]
+Description=Luxera Simulation Agent Platform - 对外 OpenAPI 服务 (8092)
+After=network.target
+Wants=network.target
+
+[Service]
+Type=simple
+User=ubuntu
+EnvironmentFile=-/etc/luxera/shared-secrets.env
+EnvironmentFile=-/etc/agent-platform/.env
+WorkingDirectory=/home/ubuntu/claude-workspace/simulation-agent-platform
+
+# 见 luxera-agent-server.service 里关于显式堆上限的说明
+ExecStart=/usr/bin/java \
+    -Xmx320m -XX:MaxMetaspaceSize=160m \
+    -XX:+ExitOnOutOfMemoryError \
+    -jar /home/ubuntu/claude-workspace/simulation-agent-platform/openapi/build/libs/simulation-agent-openapi-1.0.0.jar
+
+Restart=always
+RestartSec=10
+# JVM 收到 SIGTERM 后走完 shutdown hook 仍以 128+15=143 退出(Spring Boot 不会
+# 因为是信号退出就把码改回 0)。不声明的话, 一次正常的 `systemctl stop` 会把
+# 单元留成 failed(红), 监控误报, 运维还得学会"这个红是正常的"。
+SuccessExitStatus=143
+TimeoutStopSec=60
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

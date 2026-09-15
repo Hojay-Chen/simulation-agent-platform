@@ -153,10 +153,20 @@ class OpenApiFlowTest {
     @Test
     void docsAndSpecArePublic() throws Exception {
         mockMvc.perform(get("/v3/api-docs")).andExpect(status().isOk());
-        // /docs 是 UI(HTML), 只验不 401/403
-        mockMvc.perform(get("/docs")).andExpect(
-                result -> assertTrue(result.getResponse().getStatus() < 400,
-                        "docs 不该被鉴权拦: " + result.getResponse().getStatus()));
+
+        // 只断言 "/docs 状态码 < 400" 是不够的 —— /docs 是个 302, 302 本来就
+        // < 400, 于是"落点吃了 403"这种坏法完全测不出来。G7 部署时就真吃了
+        // 这个亏: Swagger UI 从 G4 起就一直打不开(springdoc 的 /docs 302 到
+        // /swagger-ui/index.html, 而安全配置只放行了 /docs)。
+        // 所以这里必须跟着跳转, 断言**落点**可用。
+        MvcResult docs = mockMvc.perform(get("/docs")).andExpect(status().is3xxRedirection()).andReturn();
+        String target = docs.getResponse().getRedirectedUrl();
+        assertNotNull(target, "/docs 应当 302 到文档 UI 的落点");
+        assertTrue(target.contains("swagger-ui"),
+                "/docs 的落点变了(实得 " + target + ") —— 安全配置里的放行清单要跟着改");
+
+        // 落点本身必须可用 —— 这条才是真正的断言
+        mockMvc.perform(get("/swagger-ui/index.html")).andExpect(status().isOk());
     }
 
     // ── helper ───────────────────────────────────────────────────────────

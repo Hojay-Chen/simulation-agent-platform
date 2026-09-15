@@ -24,7 +24,14 @@ FAIL=0
 note() { echo "==> $*"; }
 ok() { echo "    ✓ $*"; }
 fail() { echo "    ✗ $*"; FAIL=1; }
-cleanup() { for p in "${PIDS[@]:-}"; do kill "$p" 2>/dev/null || true; done; }
+# 递归杀整棵树 —— 见 check-console.sh 里的同款注释: 只杀直接子进程会留下
+# 孤儿 java 占着 8092, 下一个验收脚本复用到它时会撞上另一把管理钥。
+kill_tree() {
+  local pid="$1" child
+  for child in $(pgrep -P "$pid" 2>/dev/null); do kill_tree "$child"; done
+  kill "$pid" 2>/dev/null || true
+}
+cleanup() { for p in "${PIDS[@]:-}"; do [ -n "$p" ] && kill_tree "$p"; done; }
 trap cleanup EXIT
 
 psqlc() { PGPASSWORD=shared-secret psql -h 127.0.0.1 -U admin -d companion -tAc "$@"; }
@@ -40,14 +47,26 @@ psqlc "select 1" >/dev/null 2>&1 && ok "PG 在" || { fail "PG 不可达(companio
 # ── O2 服务起 ──
 note "O2: 服务起"
 if curl -s -m 2 -o /dev/null "$BASE/api/health"; then
-  ok "openapi 已在跑 (复用)"
+  # 复用一个"已在跑"的实例前先验自己这把管理钥 —— 否则 O4 会以
+  # "invalid or missing api key" 收场, 让人以为是脚本 bug, 其实是撞了
+  # 另一个验收脚本(check-console.sh)留下的实例的钥匙。503 = 那个实例压根
+  # 没配管理钥。
+  PROBE=$(curl -s -m 5 -o /dev/null -w '%{http_code}' -H "X-Admin-Key: $ADMIN" "$BASE/api/v1/openapi/clients")
+  if [ "$PROBE" = "200" ]; then
+    ok "openapi 已在跑 (复用, 管理钥对得上)"
+  else
+    fail "8092 已在跑, 但它不认本脚本的管理钥 (期望 200, 实得 $PROBE)"
+    echo "   多半是 check-console.sh 留下的实例。停掉再跑: pkill -f simulation-agent-openapi"
+    echo ""; echo "❌ 验收未通过"; exit 1
+  fi
 else
-  ( cd "$ROOT" && OPENAPI_ADMIN_KEY="$ADMIN" \
-      java -jar "$JAR" > "$TMP/openapi.log" 2>&1 & echo $! > "$TMP/openapi.pid" )
-  PIDS+=("$(cat "$TMP/openapi.pid")")
+  # exec 让子 shell 变成 java —— 否则 $! 是子 shell 的 pid, cleanup 杀不到 java
+  ( cd "$ROOT" && exec env OPENAPI_ADMIN_KEY="$ADMIN" java -jar "$JAR" ) \
+      > "$TMP/openapi.log" 2>&1 &
+  PIDS+=("$!")
   for _ in $(seq 1 40); do curl -s -m 2 -o /dev/null "$BASE/api/health" && break || sleep 2; done
   curl -s -m 3 -o /dev/null "$BASE/api/health" \
-    && ok "openapi 起来 (pid=$(cat "$TMP/openapi.pid"))" \
+    && ok "openapi 起来 (pid=$!)" \
     || { fail "8092 没起来: $(tail -3 "$TMP/openapi.log")"; }
 fi
 # springdoc spec 可读(对外文档面公开)

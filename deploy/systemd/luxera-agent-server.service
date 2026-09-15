@@ -1,0 +1,41 @@
+# 仿真 Agent 平台 —— 功能服务 (8091): 数字人全部认知链 + 40 余个定时任务。
+#
+# 安装: sudo cp deploy/systemd/luxera-agent-server.service /etc/systemd/system/
+#       sudo systemctl daemon-reload && sudo systemctl enable --now luxera-agent-server
+#
+# 密钥来自 /etc/luxera/shared-secrets.env —— 三个进程(8081/8091/8092)共用同一份,
+# 见该文件里的注释(漂移症状是"某些请求随机 401", 极难归因)。
+# 前缀 '-' 表示文件可缺失, 便于在没配密钥的开发机上也能起来。
+[Unit]
+Description=Luxera Simulation Agent Platform - 功能服务 (8091)
+After=network.target
+Wants=network.target
+
+[Service]
+Type=simple
+User=ubuntu
+EnvironmentFile=-/etc/luxera/shared-secrets.env
+EnvironmentFile=-/etc/agent-platform/.env
+WorkingDirectory=/home/ubuntu/claude-workspace/simulation-agent-platform
+
+# 堆必须显式封顶。这台机器 3.6 GB 内存, JVM 的工效学默认值是按物理内存
+# 算的 —— 每个进程都会认为自己可以要 977 MB。三个 JVM 各自按默认值跑,
+# 加起来就超过整机内存, 结果是内核 OOM killer 随机挑一个受害者(可能是
+# 已经在正常服务的 8081), 而不是"大家慢一点"。显式 -Xmx 把竞争变成
+# 各自有界, 再配合 ExitOnOutOfMemoryError: 真的撞到上限时自己体面退出,
+# 由 Restart=always 拉起来, 而不是拖着整机换页。
+ExecStart=/usr/bin/java \
+    -Xmx512m -XX:MaxMetaspaceSize=192m \
+    -XX:+ExitOnOutOfMemoryError \
+    -jar /home/ubuntu/claude-workspace/simulation-agent-platform/server/build/libs/simulation-agent-platform-1.0.0.jar
+
+Restart=always
+RestartSec=10
+# 见 luxera-agent-openapi.service 里的同款注释: 143 = 128+SIGTERM, 是正常停机
+SuccessExitStatus=143
+TimeoutStopSec=60
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
