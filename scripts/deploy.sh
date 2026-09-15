@@ -40,6 +40,17 @@ warn() { echo "    ! $*"; }
 die()  { echo "    ✗ $*"; exit 1; }
 run()  { if [ "$DRY_RUN" = "1" ]; then echo "    [dry-run] $*"; else "$@"; fi; }
 
+# 本脚本要 root(写 /etc/nginx、/var/www、reload nginx), 但**构建不能以 root 跑**。
+# `sudo bash scripts/deploy.sh` 会让下面的 npm run build 以 root 身份写
+# frontend/dist 与 node_modules 缓存 —— 目录变成 root:root, 之后以 ubuntu 跑
+# 任何 npm/gradle 任务都会 Permission denied(仓 1 的 deploy.sh 已经真踩过一次,
+# 报错还被 Gradle 包装成"构建缓存损坏", 排查代价很大)。
+# 以仓库属主身份构建, 产物权限就始终跟着工作区走。
+BUILD_USER="${SUDO_USER:-$(id -un)}"
+as_build_user() {
+  if [ "$(id -un)" = "$BUILD_USER" ]; then "$@"; else sudo -H -u "$BUILD_USER" -- "$@"; fi
+}
+
 echo ""
 echo "══════════ G7 仿真 Agent 平台部署 (deploy) ══════════"
 
@@ -67,7 +78,7 @@ if [ "$SKIP_BUILD" = "1" ]; then
 elif [ "$DRY_RUN" = "1" ]; then
   echo "    [dry-run] (cd frontend && npm run build)"
 else
-  ( cd "$ROOT/frontend" && npm run build ) && ok "构建完成" || die "前端构建失败"
+  ( cd "$ROOT/frontend" && as_build_user npm run build ) && ok "构建完成 (以 $BUILD_USER)" || die "前端构建失败"
 fi
 DIST="$ROOT/frontend/dist"
 [ "$DRY_RUN" = "1" ] || [ -f "$DIST/index.html" ] || die "缺 $DIST/index.html —— 构建没产出"
@@ -156,6 +167,25 @@ else
   else
     die "无钥期望 401, 实得 $C —— /api/ 可能被 Authelia 套住了, 三方客户端会拿到 302 登录跳转"
   fi
+
+  # G8: /api/ 现在按前缀分给两个上游。上面那条验的是 8092 那一半, 这里验 8091 那一半
+  # —— 平台自身功能面(companions/admin/v10)必须落在 8091 上。
+  #
+  # 无 JWT 时 8091 的 anyRequest().authenticated() 回 403。判据是"不是 404 也不是
+  # HTML": 404 说明请求跑到了没有该端点的 8092 上(即 /api/ 还指着 8092, 分流没生效);
+  # HTML 说明掉进了控制台 SPA 回退 —— 两者都会让前端拿到一份无法 JSON.parse 的东西。
+  C=$(code $H "https://${DOMAIN}/api/companions")
+  CCT=$(curl -sk -m 8 -o /dev/null -w '%{content_type}' $H "https://${DOMAIN}/api/companions")
+  case "$CCT" in
+    text/html*) warn "/api/companions 落到 SPA 回退 (HTTP $C) —— /api/ 的 8091 那条 location 没生效" ;;
+    *)
+      if [ "$C" = "404" ]; then
+        warn "/api/companions 实得 404 —— 像是被打到了 8092(那里没有这个端点), 检查 /api/ 的上游"
+      else
+        ok "/api/companions 无 JWT → $C (平台功能面在 8091; 非 404 非 HTML)"
+      fi
+      ;;
+  esac
 
   # 静态页必须被 Authelia 拦住(未登录 → 302 到登录页)
   C=$(code $H "https://${DOMAIN}/index.html")
