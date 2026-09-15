@@ -107,11 +107,30 @@ if grep -qE "project\(':" "$ROOT/common/build.gradle"; then
 else
   ok "common 零仓内项目依赖(依赖 contract artifact)"
 fi
-# openapi G2 骨架不依赖 digital-human(G4 接业务时再引入)
+# openapi G4 起依赖 digital-human(编译期整模块), 但启动类用 includeFilters
+# 白名单只扫 persona 闭包的薄件(CompanionService/PersonaService/PersonaCompiler/
+# LlmRouter/RelationshipService/PersonService/AgentStateService/EmotionReducer)。
+# 静态断言: 认知链包(runtime/cognition/life/behavior/emotion/memory/attention/
+# appraisal/proactive/...)绝不进 openapi 的 includeFilters 正则 —— 否则会在
+# 8092 进程里复制一份 server:8091 的认知链, 两边争抢同一批表与定时任务。
 if grep -q "project(':digital-human')" "$ROOT/openapi/build.gradle"; then
-  bad "openapi 骨架期不应依赖 digital-human(G4 再引入)"
+  ok "openapi 依赖 digital-human(G4: persona 闭包薄件)"
 else
-  ok "openapi 骨架零 DH 依赖(G4 按需引入)"
+  bad "openapi 未依赖 digital-human —— G4 后业务端点需要它"
+fi
+# 认知链包不得出现在 openapi 启动类的扫描集里
+COGNITION_PACKS="runtime cognition life behavior emotion memory attention appraisal proactive plan openloop experience reality relationship_purpose selfmodel_full scheduler interaction digitalhuman tool"
+LEAK=""
+for pkg in $COGNITION_PACKS; do
+  # includeFilters 的 pattern 字符串里若出现 com.luxera.companion.<pkg> 即为泄漏
+  if grep -qE "companion\\.${pkg}[\.\)]" "$ROOT/openapi/src/main/java/com/luxera/agentopenapi/AgentOpenApiApplication.java"; then
+    LEAK="$LEAK $pkg"
+  fi
+done
+if [[ -z "$LEAK" ]]; then
+  ok "openapi 扫描白名单不含任何认知链包(CompanionSchedule/AgentRuntime 等不进 8092)"
+else
+  bad "openapi 扫描白名单泄漏了认知链包:$LEAK —— 会在 8092 复制 server:8091 的认知链"
 fi
 
 # contract artifact 可解析(发布过 publishToMavenLocal)

@@ -11,7 +11,7 @@
 | 服务 | 目录 | 端口 | 职责 |
 |---|---|---|---|
 | **功能服务** | `server/` | 8091 | 拉起数字人全部认知链（41 个顶层包 + 40+ 定时任务），`SimulationAgentPlatformApplication` |
-| **对外 OpenAPI 服务** | `openapi/` | 8092 | 供外部/三方创建、删除、管理、使用自己的仿真 agent。G2 为骨架（健康端点），业务端点 = G4 |
+| **对外 OpenAPI 服务** | `openapi/` | 8092 | 供外部/三方创建、删除、管理、使用自己的仿真 agent。g4 起业务端点全量(API Key + OpenAPI 3.1 + /docs) |
 
 两个启动类在各自项目目录下，不共用 —— 这是拆分的显式表达。
 
@@ -69,11 +69,11 @@ java -jar openapi/build/libs/simulation-agent-openapi-1.0.0.jar    # 8092
 1. **包归属互斥**：四个 Gradle 项目拥有的顶层包两两不相交（Java split package 会静默合并）；
 2. **DH 不引用仓外世界**：DH 源码里的 `com.luxera.companion.*` import 只允许 `contracts` 与本仓四项目拥有的包（白名单从源码树推导，不写死）；
 3. **common 不认识 DH**：底座不引用使用者的包；
-4. **Gradle 依赖图**：server→{common,digital-human}、digital-human→common、common 零仓内依赖（只依赖 contract artifact）、openapi 骨架期零 DH 依赖（G4 按需引入）。
+4. **Gradle 依赖图**：server→{common,digital-human}、digital-human→common、common 零仓内依赖（只依赖 contract artifact）、openapi→{common,digital-human}（G4 起编译依赖 DH，但启动类 includeFilters 白名单只扫 persona 闭包薄件，认知链包不进 8092）。
 
 ## 7. 路线图（用户拍板的分轮）
 
-**G1 仓 1 Gradle 化 → G2 仓 2 骨架+DH 迁移 ✅ → G3 跨服务 HTTP 化 ✅ → G4 OpenAPI 服务 → G5 聊天前端 → G6 Agent 管理前端 → G7 联调部署。**
+**G1 仓 1 Gradle 化 → G2 仓 2 骨架+DH 迁移 ✅ → G3 跨服务 HTTP 化 ✅ → G4 OpenAPI 服务 ✅ → G5 聊天前端 → G6 Agent 管理前端 → G7 联调部署。**
 
 - **G3（2026-09-15 完成）**：本仓 `ChatPlatformIntegration` 占位删除、三个端口
   （ChatWorldPort/ApplicationRuntimePort/SimulatorAccessPort）落 HTTP 客户端适配器
@@ -87,6 +87,24 @@ java -jar openapi/build/libs/simulation-agent-openapi-1.0.0.jar    # 8092
   ② `processed_event.event_id` varchar(96) 装不下 143 字符的确定性认知事件 id
   （单进程时代这事件不落库——已扩到 255）。验收 `check-split.sh` S1-S8 全绿
   （仓 1 scripts/ 下，双服务同起、跨服务闭环、缺席韧性）。
-- **G4**：openapi 服务的业务端点（REST + API Key + OpenAPI 3.1 spec + springdoc `/docs`）。
+- **G4（2026-09-15 完成）**：openapi:8092 业务端点全量落地。
+  - **身份**：`openapi_clients` 表（机器客户端，不复用 users）；API Key 格式 `sap_<64 hex>`，
+    只在创建时明文返回一次，库存 sha256。管理面 `X-Admin-Key`（`OPENAPI_ADMIN_KEY` env，
+    未配 → 503 死端点）+ 客户端面 `Authorization: Bearer sap_...`，`OpenApiAuthFilter`
+    在 Spring Security 链内先验两把钥匙。
+  - **Agent 域**：复用 `companions` 表，user_id = clientId —— 仓 1
+    `CompanionDirectoryPort.requireOwned` 天然工作，认知链照常推进，跨服务零改动。
+  - **端点**：`POST /api/v1/openapi/clients`（发钥匙）、`POST/GET/PUT/DELETE
+    /api/v1/openapi/agents...`（建/列/读/改 persona/软删）、`GET
+    /api/v1/openapi/agents/{id}/state`（状态直读，纯数据面不触发认知）。
+  - **扫描白名单**：`useDefaultFilters=false` + `includeFilters` 精确点名 persona 闭包
+    薄件（CompanionService/PersonaService/PersonaCompiler/LlmRouter/RelationshipService/
+    PersonService/AgentStateService/EmotionReducer）。为让它自足，把 `EmotionReducer`/
+    `EmotionDelta`/`StateReducer` 三个纯函数类从 `runtime` 包迁进 `state` 包
+    （它们本来就只服务 state 域，runtime 是历史错置）——否则 AgentStateService 会
+    把认知链重服务连带拉起。check-agent.sh 静态断言白名单不含任何认知链包。
+  - **文档**：springdoc OpenAPI 3.1 spec（`/v3/api-docs`）+ Swagger UI（`/docs`），公开面。
+  - **验收**：`scripts/check-openapi.sh` O1-O7 全绿；`OpenApiFlowTest` 5 断言钉死
+    鉴权矩阵 + CRUD 闭环 + 归属隔离 + 吊销立即失效。
 - **G5/G6**：两套全新前端（聊天 = 现代 IM 风 + 应用 + agent 好友；仿真 = agent 创建/管理/使用控制台）。
 - **G7**：nginx 分流 + 联调部署。

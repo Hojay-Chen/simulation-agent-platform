@@ -1,4 +1,4 @@
-package com.luxera.companion.runtime;
+package com.luxera.companion.state;
 
 /**
  * 情绪增量(§17): Emotion Agent 的结构化输出之一。

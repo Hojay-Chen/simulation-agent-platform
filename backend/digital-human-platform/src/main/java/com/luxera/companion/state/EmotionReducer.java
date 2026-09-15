@@ -1,4 +1,4 @@
-package com.luxera.companion.runtime;
+package com.luxera.companion.state;
 
 import com.luxera.companion.state.AgentState;
 import org.springframework.stereotype.Component;

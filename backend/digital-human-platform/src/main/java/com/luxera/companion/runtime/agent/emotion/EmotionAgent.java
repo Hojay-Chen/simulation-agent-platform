@@ -10,7 +10,7 @@ import com.luxera.companion.runtime.Agent;
 import com.luxera.companion.runtime.skill.SkillPromptComposer;
 import com.luxera.companion.runtime.AgentTraceService;
 import com.luxera.companion.runtime.skill.SkillPromptComposer;
-import com.luxera.companion.runtime.EmotionDelta;
+import com.luxera.companion.state.EmotionDelta;
 import com.luxera.companion.state.AgentStateService;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;

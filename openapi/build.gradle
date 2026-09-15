@@ -9,10 +9,16 @@ plugins {
 }
 
 dependencies {
-    // G2 骨架只依赖 common(同库数据面 + kernel 类)。digital-human 的认知链
-    // (40+ @Scheduled job / LLM / 事件路由)不进本服务 —— 对外 API 的业务端点
-    // (G4)接入时再按需引入, 而不是先把整个认知引擎拉起来。
+    // G4: 引入 digital-human 的 persona/llm/state/relationship/auth 子集 ——
+    // 编译依赖整模块, 但启动类 scanBasePackages 显式白名单(persona/llm/state/
+    // relationship/auth + common), 认知链包(runtime/cognition/life/behavior/scheduler)
+    // 不进本服务。边界守卫(check-agent.sh)静态断言这一点。
     implementation project(':common')
+    implementation project(':digital-human')
+
+    // springdoc: OpenAPI 3.1 spec + /docs UI(README G4 指定)。1.7.x 是 SB 2.7 兼容线。
+    implementation 'org.springdoc:springdoc-openapi-webmvc-core:1.7.0'
+    implementation 'org.springdoc:springdoc-openapi-ui:1.7.0'
 
     implementation 'org.springframework.boot:spring-boot-starter-web'
     implementation 'org.springframework.boot:spring-boot-starter-data-jpa'

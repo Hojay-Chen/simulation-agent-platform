@@ -1,4 +1,4 @@
-package com.luxera.companion.runtime;
+package com.luxera.companion.state;
 
 /**
  * 状态归约器(§61/§99): 所有状态变更必须经过 Reducer, 保证状态变化有来源、可追踪。

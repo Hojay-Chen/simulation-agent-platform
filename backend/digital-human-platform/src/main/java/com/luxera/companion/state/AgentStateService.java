@@ -1,7 +1,7 @@
 package com.luxera.companion.state;
 
-import com.luxera.companion.runtime.EmotionDelta;
-import com.luxera.companion.runtime.EmotionReducer;
+import com.luxera.companion.state.EmotionDelta;
+import com.luxera.companion.state.EmotionReducer;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 

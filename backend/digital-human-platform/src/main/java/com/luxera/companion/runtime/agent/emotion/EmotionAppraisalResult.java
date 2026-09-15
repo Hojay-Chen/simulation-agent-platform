@@ -1,6 +1,6 @@
 package com.luxera.companion.runtime.agent.emotion;
 
-import com.luxera.companion.runtime.EmotionDelta;
+import com.luxera.companion.state.EmotionDelta;
 
 import java.util.List;
 

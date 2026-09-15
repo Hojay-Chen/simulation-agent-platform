@@ -1,0 +1,31 @@
+# G4 openapi 测试配置: 隔离的 companion_test 库 + Mock LLM + 钉死的调度(本服务
+# 不扫认知链包, scheduler 段只是防御性的 — 万一依赖链里有 @Scheduled 引入)。
+spring:
+  datasource:
+    url: jdbc:postgresql://127.0.0.1:5432/companion_test
+    username: admin
+    password: shared-secret
+    hikari:
+      maximum-pool-size: 5
+      minimum-idle: 1
+      connection-timeout: 30000
+  jpa:
+    hibernate:
+      ddl-auto: update
+
+app:
+  jwt:
+    secret: openapi-module-test-secret-0123456789abcdef
+    expiration-ms: 604800000
+  llm:
+    provider: mock
+  # 管理密钥: 与 OpenApiFlowTest.ADMIN 常量一致 — 测试面必须配, 否则管理面 503
+  openapi:
+    admin-key: test-openapi-admin-key
+
+springdoc:
+  api-docs:
+    path: /v3/api-docs
+    version: OPENAPI_3_1
+  swagger-ui:
+    path: /docs

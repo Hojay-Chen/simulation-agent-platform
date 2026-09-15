@@ -30,3 +30,18 @@ app:
   jwt:
     secret: ${JWT_SECRET:luxera-companion-platform-dev-secret-change-me-0123456789abcdef}
     expiration-ms: ${JWT_EXPIRATION_MS:604800000}
+
+  # ── G4: 对外 OpenAPI 业务配置 ──────────────────────────────────
+  # 管理密钥: 建/列/吊销客户端("发钥匙"的动作)。未配 → 管理面 503 死端点。
+  openapi:
+    admin-key: ${OPENAPI_ADMIN_KEY:}
+
+# springdoc — OpenAPI 3.1 + Swagger UI(/docs)。spec/docs 面公开(不含密钥),
+# 三方接入第一步就是看文档; 业务端点鉴权在 OpenApiAuthFilter。
+springdoc:
+  api-docs:
+    path: /v3/api-docs
+    version: OPENAPI_3_1
+  swagger-ui:
+    path: /docs
+    operations-sorter: method
