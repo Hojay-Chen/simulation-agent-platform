@@ -1,0 +1,45 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --color-bg: #14100e;
+  --color-surface: #1a1512;
+  --color-raised: #211a16;
+  --color-line: #332a21;
+  --color-ink: #efe5d6;
+  --color-ink-soft: #a89a8e;
+  --color-ember: #d97757;
+  --color-ember-soft: #e8b467;
+  color-scheme: dark;
+}
+
+@layer base {
+  html {
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+  body {
+    @apply bg-cocoa-950 text-cocoa-100 font-sans;
+  }
+  ::selection {
+    background: rgba(217, 119, 87, 0.28);
+  }
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: #332a21;
+    border-radius: 8px;
+    border: 2px solid transparent;
+    background-clip: padding-box;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: #473a2d;
+    background-clip: padding-box;
+  }
+  code {
+    @apply font-mono text-ember-soft;
+  }
+}
