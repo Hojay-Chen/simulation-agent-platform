@@ -92,7 +92,12 @@ npm run build                        # tsc -b && vite build → dist/
 
 ## 7. 路线图（用户拍板的分轮）
 
-**G1 仓 1 Gradle 化 → G2 仓 2 骨架+DH 迁移 ✅ → G3 跨服务 HTTP 化 ✅ → G4 OpenAPI 服务 ✅ → G5 聊天前端 ✅ → G6 Agent 管理前端 → G7 联调部署。**
+**G1 仓 1 Gradle 化 → G2 仓 2 骨架+DH 迁移 ✅ → G3 跨服务 HTTP 化 ✅ → G4 OpenAPI 服务 ✅ → G5 聊天前端 ⚠️ 方向被推翻 → G6 Agent 管理前端 ✅ → G7 联调部署 ✅ → G8 两个域名各归其位 ✅。**
+
+> **G5 被推翻的地方**（G8）：它让**前端**按路径段分流、加 `/agent` 前缀直连 8091。
+> 聊天平台的前端只能调聊天平台的后端 —— "聊天平台调仿真 Agent 平台"指的是**后端调后端**。
+> 仓 1 已改为前端单入口、伴侣域由 8081 在服务端转发给 8091；本仓的 `/api/` 改为按
+> 前缀分两个上游（§8.4）。这条纠正**不影响**本仓的认知链设计 —— 它改的是流量入口。
 
 - **G3（2026-09-15 完成）**：本仓 `ChatPlatformIntegration` 占位删除、三个端口
   （ChatWorldPort/ApplicationRuntimePort/SimulatorAccessPort）落 HTTP 客户端适配器
@@ -170,6 +175,25 @@ npm run build                        # tsc -b && vite build → dist/
     ③ 3.6 GB 内存装三个默认堆（各 977 MB 上限）的 JVM，OOM killer 会随机挑受害者
     —— 已显式封顶堆 + 加 swap。另修了一个从 G1 就在转的崩溃循环：仓 1 单元的
     `WorkingDirectory` 指向拆分后已不存在的 `backend/`。
+- **G8（2026-09-16 完成）**：`agent.luxera.top` 的 `/api/` 按前缀分给两个上游；
+  仓 1 前端改单入口（本仓只改 nginx 与 deploy.sh）。
+  - **用户纠正了 G5 的架构方向**：聊天平台的前端**只能**调聊天平台的后端；
+    "聊天平台调仿真 Agent 平台"指的是**后端调后端**。于是仓 1 删掉前端 `/agent`
+    前缀分流，伴侣域改由 8081 在服务端转给 8091。**本仓的 `/api/` 分流与此正交** ——
+    它服务的是"直接使用仿真 Agent 平台的调用方"（JWT 用户 / 运维），不是聊天前端。
+  - **本域 `/api/` 改为按前缀分两个上游**（原先整段指向 8092，于是平台自身功能面
+    companions / admin / v10 在本域下全是 404）：
+    `= /api/health` 与 `/api/v1/openapi/` → **8092**；其余 `/api/` → **8091**。
+    nginx 取最长前缀匹配、`=` 优先于前缀，与书写顺序无关。
+    `= /api/health` **必须单列** —— 否则被 `/api/` 抢去 8091，而 8091 只在
+    SecurityConfig 里 permitAll 了该路径、并没有这个控制器，结果是 404。
+  - **`/internal/**` 有意不放在 `/api/` 前缀下**，因此不会被这个 location 暴露。
+    它是 HMAC 守护的服务间面，本该留在内网；哪天把它也代理出去，就等于把一个
+    本应内网的服务间接口挂上公网，只靠一把 HMAC 密钥挡着。
+  - `deploy.sh` 新增断言：`/api/companions` 不得是 HTML（控制台 SPA 回退）也不得是
+    404（那说明 `/api/` 还指着 8092、分流没生效）。另修了构建以 root 跑的坑
+    （`sudo` 下 `npm run build` 会写出 root 属主的 `dist/` 与 `node_modules` 缓存，
+    之后以 ubuntu 跑 npm/gradle 全部 `Permission denied`）—— 改为以 `$SUDO_USER` 构建。
 
 ## 8. 部署
 
@@ -184,6 +208,13 @@ bash scripts/deploy.sh                # 构建 → rsync /var/www/agent → ngin
 bash scripts/deploy.sh --skip-build   # 只同步产物 + nginx
 bash scripts/deploy.sh --dry-run      # 只体检，不动手
 ```
+
+> **构建不会以 root 跑。** 脚本用 `$SUDO` 单独提权做要 root 的那几步（写
+> `/etc/nginx`、`/var/www`、reload nginx），构建步骤则通过 `as_build_user` 降回
+> `$SUDO_USER`。`sudo bash scripts/deploy.sh` 也能用，同样是降权构建 ——
+> 以 root 跑 `npm run build` 会写出 root 属主的 `dist/` 与 `node_modules` 缓存，
+> 之后以 ubuntu 跑任何 npm/gradle 任务都 `Permission denied`（仓 1 的
+> `deploy.sh` 真踩过一次，且 Gradle 把原因包装成"构建缓存损坏"，与权限无关）。
 
 nginx 配置的**源头在 `deploy/nginx/agent.luxera.top.conf`**（版本库里），
 `/etc/nginx/conf.d/` 是它的安装位置 —— 改配置请改仓库里那份再跑 deploy.sh，
@@ -222,3 +253,26 @@ G3 的 HMAC 与 G5 的共用 JWT 一起静默失效。
 另：单元里 `SuccessExitStatus=143` 是必须的 —— 143 = 128+SIGTERM，JVM 走完
 shutdown hook 仍以 143 退出，不声明的话一次正常的 `systemctl stop` 会把单元留成
 `failed`（红），监控误报。
+
+### 8.4 `/api/` 底下有两个上游（G8 起）
+
+| 路径 | 上游 | 为什么 |
+|---|---|---|
+| `= /api/health` | 8092 | 控制台启动探测。**必须用 `=` 单列** —— 否则被 `/api/` 抢去 8091，而 8091 只 permitAll 了该路径、没有这个控制器 → 404 |
+| `/api/v1/openapi/` | 8092 | 对外 OpenAPI 产品面（`X-Admin-Key` / `Bearer sap_...`，由 `OpenApiAuthFilter` 把关） |
+| 其余 `/api/` | 8091 | 平台自身功能面（companions / admin / v10，用户 JWT） |
+
+nginx 取**最长**前缀匹配、`=` 优先于任何前缀，所以不靠书写顺序区分。
+8091 那条要 `proxy_buffering off` —— `/api/companions/{id}/conversations/{cid}/chat`
+是 `SseEmitter` 流式（边想边说，300s），缓冲会把它变成"等想完一次性吐出"。
+（同前缀下的 `/conversations/first` **不是**流式：它开或复用会话，回一份
+`ConversationView` 的 JSON。）
+
+`/internal/**` **有意不放在 `/api/` 前缀下** —— 它是 HMAC 守护的服务间面
+（`InternalAuthFilter` 验签），本该留在内网。它落进 `location /`（Authelia 门），
+不会被这个 location 暴露出去。
+
+**验证**：`scripts/deploy.sh` 的 D5 会断言 `/api/companions` 无 JWT 时**不是 404**
+（那说明 `/api/` 还指着 8092、分流没生效）也**不是 HTML**（掉进控制台 SPA 回退）。
+真跑结果：`/api/health` → 200（8092）、`/api/v1/openapi/agents` 无钥 → 401、
+`/api/companions` 无 JWT → 403（平台功能面在 8091）。
