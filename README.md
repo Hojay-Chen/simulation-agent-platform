@@ -33,9 +33,12 @@ Java 包名保持 `com.luxera.companion.*`（与仓 1 同一哲学：改包名�
 ## 3. 对外认知只有两条
 
 - **契约 artifact**：`com.luxera:contract:1.0.0`（仓 1 执行 `gradle :contract:publishToMavenLocal` 发布）。`ChatWorldPort` / `ApplicationRuntimePort` / `SimulatorAccessPort` / `CompanionDirectoryPort` 等 SPI 端口与 `MessageView` 等 DTO 全部在那里 —— 本仓对 chat 世界与 LAP 的全部认知止于此。
-- **本仓 common**：User/UserRepository（只读昵称）/AppProperties/CurrentUser/BusinessException/JsonCodec/3 个 Converter/Outbox 三件（消费侧）。
+- **本仓 common**：User/UserRepository（只读昵称）/AppProperties/CurrentUser/BusinessException/JsonCodec/3 个 Converter/Outbox 三件（消费侧）+ **G3 补入的 JwtUtil/JwtAuthenticationFilter**（chat 签发的 JWT 在 8091 同源验签——G2 遗漏，check-split 抓出）。
 
-G2→G3 过渡期，三个跨服务端口由 `digitalhuman/integration/ChatPlatformIntegration` 的占位实现兜底（读返回空、写诚实抛错、fire-and-forget 静默）——与仓 1 `AgentPlatformIntegration` 的占位哲学对称。G3 落地 HTTP 适配器后占位自动退位（`@ConditionalOnMissingBean`）。
+G3 起三个跨服务端口（ChatWorldPort/ApplicationRuntimePort/SimulatorAccessPort）由
+`server/.../http/` 的 HTTP 客户端适配器承担（`HttpAdapterConfiguration` 装配），对
+chat 平台(8081)的 `/internal/**` 面 HMAC 签名调用。占位哲学原样保留在适配器的缺席
+语义里：读返回空、写诚实抛错、fire-and-forget 静默——chat 缺席时认知链照常运转。
 
 ## 4. 与仓 1 的关系
 
@@ -44,7 +47,7 @@ G2→G3 过渡期，三个跨服务端口由 `digitalhuman/integration/ChatPlatf
 | 契约 | 仓 1 `contract` 项目 publishToMavenLocal → 本仓当普通外部依赖 |
 | 数据库 | 同一个 PG `companion` 库；表不重叠、跨仓无 FK；`users` 表仓 1 写 / 本仓只读；`outbox_event` 仓 1 写 / 本仓 `OutboxRelayJob` 消费（跨进程可靠通道） |
 | 服务发现 | 功能服务 8091（仓 1 yml `app.agent-platform.base-url` 默认值）；openapi 8092 |
-| 服务间密钥 | `app.agent-platform.internal-service-key` 两仓注入同一值（G3 起用） |
+| 服务间密钥 | `AGENT_PLATFORM_INTERNAL_KEY` 两仓注入同一值；HMAC-SHA256（`X-Lap-Timestamp`+`X-Lap-Signature` 签 `timestamp.body`），未配 → 双方 /internal 503 死端点 |
 | 实时通道 | DHCP v1 WebSocket：本仓 `ChatSimulatorConnector`(客户端) → 仓 1 `/ws/simulator`(服务端)，`app.simulator.chat-ws-url` 指向 8081 |
 | git 历史 | ours-merge 嫁接：本仓保有 companion-agent → chat-platform 全部提交链，`git log --follow` 可穿到单体时代（DH 路径名不变是硬前提） |
 
@@ -70,9 +73,20 @@ java -jar openapi/build/libs/simulation-agent-openapi-1.0.0.jar    # 8092
 
 ## 7. 路线图（用户拍板的分轮）
 
-**G1 仓 1 Gradle 化 → G2 仓 2 骨架+DH 迁移（本轮，已完成）→ G3 跨服务 HTTP 化 → G4 OpenAPI 服务 → G5 聊天前端 → G6 Agent 管理前端 → G7 联调部署。**
+**G1 仓 1 Gradle 化 → G2 仓 2 骨架+DH 迁移 ✅ → G3 跨服务 HTTP 化 ✅ → G4 OpenAPI 服务 → G5 聊天前端 → G6 Agent 管理前端 → G7 联调部署。**
 
-- **G3**：chat 侧删 `AgentPlatformIntegration` 占位、落 `HttpCompanionDirectoryAdapter`；本仓删 `ChatPlatformIntegration` 占位、落三个端口的 HTTP 客户端适配器（同一 `internal-service-key` 体系）；`check-split.sh` 两服务同起验收。
+- **G3（2026-09-15 完成）**：本仓 `ChatPlatformIntegration` 占位删除、三个端口
+  （ChatWorldPort/ApplicationRuntimePort/SimulatorAccessPort）落 HTTP 客户端适配器
+  （`server/.../http/` 包：`HttpChatWorldAdapter`/`HttpApplicationRuntimeAdapter`/
+  `HttpSimulatorAccessAdapter`，读缺席→空、写缺席→抛、fire-and-forget 吞、token 缺→不连）；
+  `InternalCompanionDirectoryController` 暴露 `/internal/directory/**` 给仓 1；
+  HMAC 签名鉴权（`InternalSignature` + `InternalAuthFilter`，密钥
+  `AGENT_PLATFORM_INTERNAL_KEY` 与仓 1 同值）。**check-split.sh 抓出两个 G2 隐性缺口并修复**：
+  ① 仓 2 common 缺 `JwtUtil`/`JwtAuthenticationFilter`（"JWT 同源"只是设计意图，8091
+  从没解析过 token——已补，同 io.jsonwebtoken 栈）；
+  ② `processed_event.event_id` varchar(96) 装不下 143 字符的确定性认知事件 id
+  （单进程时代这事件不落库——已扩到 255）。验收 `check-split.sh` S1-S8 全绿
+  （仓 1 scripts/ 下，双服务同起、跨服务闭环、缺席韧性）。
 - **G4**：openapi 服务的业务端点（REST + API Key + OpenAPI 3.1 spec + springdoc `/docs`）。
 - **G5/G6**：两套全新前端（聊天 = 现代 IM 风 + 应用 + agent 好友；仿真 = agent 创建/管理/使用控制台）。
 - **G7**：nginx 分流 + 联调部署。

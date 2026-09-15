@@ -50,6 +50,16 @@ app:
     secret: ${JWT_SECRET:luxera-companion-platform-dev-secret-change-me-0123456789abcdef}
     expiration-ms: ${JWT_EXPIRATION_MS:604800000}   # 7 天
 
+  # ── 与仓 1 chat-platform 的跨服务对接（G3 起） ─────────────────────
+  # chat 平台是本服务的"世界"——消息、会话、应用运行都在那边。HMAC 签名
+  # (X-Lap-Timestamp + X-Lap-Signature, sha256=HMAC(key, timestamp.body))
+  # 与仓 1 R14 远端应用同一模式；JWT 那层表达不了服务身份。
+  chat-platform:
+    base-url: ${CHAT_PLATFORM_BASE_URL:http://127.0.0.1:8081}
+  agent-platform:
+    # 服务间共享密钥——两仓环境变量注入同一个值。未配置时 /internal 端点拒绝服务。
+    internal-service-key: ${AGENT_PLATFORM_INTERNAL_KEY:luxera-chat-agent-internal-dev-key-change-me}
+
   # LLM 网关: openai-compatible | anthropic | mock
   # 默认 DeepSeek(OpenAI 兼容); 未配置 api-key 时自动降级 Mock,保证离线可跑通全流程
   llm:

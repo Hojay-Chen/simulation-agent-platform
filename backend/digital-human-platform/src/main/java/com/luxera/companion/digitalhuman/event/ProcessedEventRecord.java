@@ -25,7 +25,7 @@ import java.time.LocalDateTime;
 public class ProcessedEventRecord {
 
     @Id
-    @Column(name = "event_id", length = 96)
+    @Column(name = "event_id", length = 255)
     private String eventId;
 
     @Column(name = "person_id", nullable = false, length = 64)

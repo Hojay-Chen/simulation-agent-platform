@@ -18,5 +18,11 @@ dependencies {
     api 'org.springframework.boot:spring-boot-starter-web'
     api 'org.springframework.boot:spring-boot-starter-data-jpa'
     implementation 'org.springframework.boot:spring-boot-starter-security'
+    // JWT 与仓 1 同源校验(G3 check-split 抓出的缺口: G2 只裁走了 User/CurrentUser,
+    // JwtUtil/JwtAuthenticationFilter 留在了仓 1 —— 8091 上 JWT 从未被解析过,
+    // "同源 secret"只是设计意图。现在补上: 同 io.jsonwebtoken 栈, 同 secret 配置。)
+    api 'io.jsonwebtoken:jjwt-api'
+    implementation 'io.jsonwebtoken:jjwt-impl'
+    implementation 'io.jsonwebtoken:jjwt-jackson'
     testImplementation 'org.springframework.boot:spring-boot-starter-test'
 }
