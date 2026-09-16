@@ -146,7 +146,7 @@ npm run build                        # tsc -b && vite build → dist/
     agent 实时状态（10s 轮询；**认知链未初始化时如实说"尚未初始化"，不编 0**）。
   - **验收**：`check-console.sh` C1-C7，其中 C4（经 vite 无钥必须是 401 而非 404）
     同时证明代理确实落到了 8092；C7 专验两面钥匙互不相通。
-- **G7（2026-09-16 完成）**：nginx 分流 + 部署（`agent.luxera.top`，与 companion 并存）。
+- **G7（2026-09-16 完成）**：nginx 分流 + 部署（`being.luxera.top`，与 `chat.luxera.top` 并存）。
   - **鉴权分层是本轮的要点**：人（浏览器）→ 控制台静态页 → **Authelia 前门**；
     机器（三方）→ `/api/**` → **不套 Authelia**，由 API Key 自己把关。
     给 `/api/` 套上 Authelia 会把整个对外 OpenAPI 产品打死 —— 三方带 `sap_...` 调过来
@@ -164,7 +164,7 @@ npm run build                        # tsc -b && vite build → dist/
     "invalid or missing api key"。（已修：`exec` 让子 shell 变成 java + `kill_tree`
     递归收尾 + 复用前先验自己那把管理钥。）
   - **DNS 是唯一待人工的一步**：`luxera.top` **不是泛解析**，每个子域名单独登记。
-    `agent.luxera.top` 的公网 A 记录需在 DNS 服务商处添加指向 `124.222.135.75`；
+    `being.luxera.top` 的公网 A 记录需在 DNS 服务商处添加指向 `124.222.135.75`；
     在那之前站内（`/etc/hosts` 或 `curl --resolve`）可用，外网访问不到。`deploy.sh` D6
     会把这件事喊出来，而不是假装部署成功。
   - **首次真机部署（2026-09-16）又抓出三个只在"两个仓同时真跑"时才现形的问题**，
@@ -175,7 +175,15 @@ npm run build                        # tsc -b && vite build → dist/
     ③ 3.6 GB 内存装三个默认堆（各 977 MB 上限）的 JVM，OOM killer 会随机挑受害者
     —— 已显式封顶堆 + 加 swap。另修了一个从 G1 就在转的崩溃循环：仓 1 单元的
     `WorkingDirectory` 指向拆分后已不存在的 `backend/`。
-- **G8（2026-09-16 完成）**：`agent.luxera.top` 的 `/api/` 按前缀分给两个上游；
+- **G8（2026-09-16 完成）**：`being.luxera.top` 的 `/api/` 按前缀分给两个上游；
+  - **域名定名（用户拍板）**：本仓 `being.luxera.top`，仓 1 `chat.luxera.top`。
+    `being` 取"独立存在的人"（仓 1 README 开篇："Chat Platform 是软件，Agent 是
+    独立存在的人"）。两个名字都被 `*.luxera.top` 泛域名证书覆盖，无需单独签证书。
+    此前用过的 `agent.luxera.top` / `companion.luxera.top` 已退役（nginx 里不再有
+    server 块，落到默认 server）。**两个域名都需要在 DNS 服务商处各加一条 A 记录
+    指向 `124.222.135.75`** —— 详见 §8.5。
+    注意 `/var/www/agent` 这个 webroot 目录名**没跟着改**：它是内部路径、用户不可见，
+    改动只增加部署风险没有收益。
   仓 1 前端改单入口（本仓只改 nginx 与 deploy.sh）。
   - **用户纠正了 G5 的架构方向**：聊天平台的前端**只能**调聊天平台的后端；
     "聊天平台调仿真 Agent 平台"指的是**后端调后端**。于是仓 1 删掉前端 `/agent`
@@ -216,7 +224,7 @@ bash scripts/deploy.sh --dry-run      # 只体检，不动手
 > 之后以 ubuntu 跑任何 npm/gradle 任务都 `Permission denied`（仓 1 的
 > `deploy.sh` 真踩过一次，且 Gradle 把原因包装成"构建缓存损坏"，与权限无关）。
 
-nginx 配置的**源头在 `deploy/nginx/agent.luxera.top.conf`**（版本库里），
+nginx 配置的**源头在 `deploy/nginx/being.luxera.top.conf`**（版本库里），
 `/etc/nginx/conf.d/` 是它的安装位置 —— 改配置请改仓库里那份再跑 deploy.sh，
 否则下次部署会被覆盖回去。
 
@@ -276,3 +284,20 @@ nginx 取**最长**前缀匹配、`=` 优先于任何前缀，所以不靠书写
 （那说明 `/api/` 还指着 8092、分流没生效）也**不是 HTML**（掉进控制台 SPA 回退）。
 真跑结果：`/api/health` → 200（8092）、`/api/v1/openapi/agents` 无钥 → 401、
 `/api/companions` 无 JWT → 403（平台功能面在 8091）。
+
+### 8.5 DNS：两个域名各要一条 A 记录（**人工**）
+
+`luxera.top` **不是泛解析** —— 每个子域名都是单独登记的，加一条记录不会顺带让别的
+子域名可用。两个平台各需要一个名字：
+
+| 域名 | 指向 | 用途 |
+|---|---|---|
+| `chat.luxera.top` | `124.222.135.75` | 聊天平台（仓 1） |
+| `being.luxera.top` | `124.222.135.75` | 仿真 Agent 平台（本仓） |
+
+在这两条记录生效之前，站内（`/etc/hosts` 已写好，或 `curl --resolve`）完全可用，
+但外网访问不到。`scripts/deploy.sh` 的 D6 会把缺口喊出来，而不是假装部署成功。
+
+历史：`companion.luxera.top` 曾有一条指向本机的公网 A 记录（改名后已无 server 块，
+落到默认 server）—— 可以把它改指/改名为 `chat.luxera.top` 复用，也可以删掉重加。
+`agent.luxera.top` 从来没有过记录。

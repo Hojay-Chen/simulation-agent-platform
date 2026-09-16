@@ -9,7 +9,7 @@
 #   D3 静态产物 rsync 到 /var/www/agent
 #   D4 nginx 配置安装 + nginx -t + reload
 #   D5 健康检查: /api/health + /docs + 前端 index
-#   D6 DNS 体检: agent.luxera.top 的公网 A 记录 (**需要人工在 DNS 服务商处添加**)
+#   D6 DNS 体检: being.luxera.top 的公网 A 记录 (**需要人工在 DNS 服务商处添加**)
 #
 # 用法:
 #   bash scripts/deploy.sh                  # 全量
@@ -18,9 +18,9 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-DOMAIN="${DOMAIN:-agent.luxera.top}"
+DOMAIN="${DOMAIN:-being.luxera.top}"
 WEBROOT="${WEBROOT:-/var/www/agent}"
-CONF_SRC="$ROOT/deploy/nginx/agent.luxera.top.conf"
+CONF_SRC="$ROOT/deploy/nginx/being.luxera.top.conf"
 CONF_DST="/etc/nginx/conf.d/${DOMAIN}.conf"
 SUDO="${SUDO:-sudo}"
 
