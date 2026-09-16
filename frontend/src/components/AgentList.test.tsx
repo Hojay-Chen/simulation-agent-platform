@@ -55,7 +55,10 @@ describe('AgentList 渲染', () => {
     const html = renderToStaticMarkup(
       <AgentList agents={[agent(), agent({ agentId: 'agt-2' })]} selectedId="agt-2" />,
     )
-    expect(html).toContain('bg-cocoa-800')
+    // 断言的是 `bg-accent-soft` 而不是随便一个底色: 未选中行的 hover 也是底色,
+    // 若选中态用同一个 token, 两者就分不出来了 —— 而"哪一条被选中了"是这一屏
+    // 唯一的交互事实。
+    expect(html).toContain('bg-accent-soft')
   })
 })
 

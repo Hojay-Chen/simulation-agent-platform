@@ -1,56 +1,80 @@
-// 主题沿用仓 1 聊天前端的暖棕(cocoa/ember) —— 两个前端属于同一个产品,
-// 但布局语言不同: 聊天是 IM(会话侧栏), 这里是管理控制台(顶部栏 + 侧边导航)。
+/**
+ * 设计系统 —— 与仓 1 聊天前端**同构**的一套语义 token。
+ *
+ * 刻意不用"抄一份"的方式保持一致, 而是**同一个定义**: 两份 config 的 `colors` 块
+ * 逐字相同, `src/index.css` 的 `:root` / `.dark` 也逐字相同。两个前端属于同一个产品,
+ * 而"同步"这件事只要靠人去记, 就一定会漂 —— 漂的表现是某个按钮在两个站点里
+ * 是两种蓝, 那种错误没人会报告, 但所有人都会觉得哪里不对。
+ *
+ * **核心决策: 语义 CSS 变量 + `darkMode: 'class'`, 组件只用语义名, 全项目零 `dark:` 前缀。**
+ * 于是双主题的成本是每个概念**一个类名**, 而不是每个类名两遍。
+ *
+ * 旧的暖棕调色板(cocoa/ember/rosewood/jade)与 `shadow-glow` / `shadow-panel` 已整体删除。
+ * `shadow-glow` 里那个暖金 `rgba(233,180,103,.18)` 正是"暧昧"的签名 —— 它不是一个
+ * 阴影参数, 它是一个态度, 而这个控制台不需要那个态度。
+ */
 module.exports = {
   content: ['./index.html', './src/**/*.{js,ts,jsx,tsx}'],
+  darkMode: 'class',
   theme: {
     extend: {
       colors: {
-        cocoa: {
-          950: '#14100e',
-          900: '#1a1512',
-          850: '#201a16',
-          800: '#272019',
-          700: '#332a21',
-          600: '#473a2d',
-          500: '#6b5844',
-          400: '#9a8168',
-          300: '#c3ac90',
-          200: '#dfd0ba',
-          100: '#efe5d6',
-          50: '#f9f4ec',
-        },
-        ember: {
-          DEFAULT: '#d97757',
-          soft: '#e8b467',
-          deep: '#b45a3f',
-          pale: '#f4d7c4',
-        },
-        rosewood: {
-          DEFAULT: '#a85d6f',
-          soft: '#c98a97',
-        },
-        jade: {
-          DEFAULT: '#5f9e7d',
-          soft: '#8ec2a6',
-        },
+        // ── 面 ──────────────────────────────
+        /** 页面底 */
+        surface: 'rgb(var(--surface) / <alpha-value>)',
+        /** 卡片/面板/浮层。亮色下与 surface 同色, 靠边框区分 —— 高级感来自边界, 不来自色块 */
+        raised: 'rgb(var(--raised) / <alpha-value>)',
+        /** 输入框/搜索框/代码块 —— 视觉上"凹进去"的地方 */
+        sunken: 'rgb(var(--sunken) / <alpha-value>)',
+        /** 遮罩 */
+        scrim: 'rgb(var(--scrim) / <alpha-value>)',
+
+        // ── 线 ──────────────────────────────
+        /** 发丝分隔线 */
+        line: 'rgb(var(--line) / <alpha-value>)',
+        /** 需要被看见的边框(聚焦、选中) */
+        'line-strong': 'rgb(var(--line-strong) / <alpha-value>)',
+
+        // ── 字 ──────────────────────────────
+        ink: 'rgb(var(--ink) / <alpha-value>)',
+        'ink-soft': 'rgb(var(--ink-soft) / <alpha-value>)',
+        'ink-faint': 'rgb(var(--ink-faint) / <alpha-value>)',
+
+        // ── 强调 ────────────────────────────
+        /** 电光蓝。全局唯一的强调色 */
+        accent: 'rgb(var(--accent) / <alpha-value>)',
+        /** 淡蓝底(选中行、标签) */
+        'accent-soft': 'rgb(var(--accent-soft) / <alpha-value>)',
+        /** 蓝底上的字 */
+        'accent-ink': 'rgb(var(--accent-ink) / <alpha-value>)',
+
+        ok: 'rgb(var(--ok) / <alpha-value>)',
+        warn: 'rgb(var(--warn) / <alpha-value>)',
+        danger: 'rgb(var(--danger) / <alpha-value>)',
+
+        // ── IM 气泡 ─────────────────────────
+        // 这个控制台不画气泡, 但 token 留着 —— 两个前端的变量定义要能逐字对照,
+        // 少三项的后果是下次同步时没人知道该不该补。
+        'bubble-in': 'rgb(var(--bubble-in) / <alpha-value>)',
+        'bubble-out': 'rgb(var(--bubble-out) / <alpha-value>)',
+        'bubble-out-ink': 'rgb(var(--bubble-out-ink) / <alpha-value>)',
       },
       fontFamily: {
         sans: ['Inter', 'PingFang SC', 'HarmonyOS Sans SC', 'Microsoft YaHei', '-apple-system', 'sans-serif'],
+        /** 技术标识专用: API key / session id / agent id。科技感来自"确定性", 等宽是它最省的载体 */
         mono: ['"JetBrains Mono"', '"SF Mono"', 'Menlo', 'Consolas', 'monospace'],
       },
       boxShadow: {
-        glow: '0 0 0 1px rgba(233,180,103,0.18), 0 8px 40px -12px rgba(0,0,0,0.55)',
-        panel: '0 1px 0 rgba(255,255,255,0.03) inset, 0 12px 40px -16px rgba(0,0,0,0.6)',
+        /** 全局唯一的阴影。只给浮层用 —— 页面上的卡片一律靠边框, 不靠投影 */
+        pop: 'var(--shadow-pop)',
       },
+      transitionDuration: { DEFAULT: '150ms' },
       keyframes: {
         fadeUp: {
           '0%': { opacity: '0', transform: 'translateY(8px)' },
           '100%': { opacity: '1', transform: 'translateY(0)' },
         },
-        fadeIn: {
-          '0%': { opacity: '0' },
-          '100%': { opacity: '1' },
-        },
+        fadeIn: { '0%': { opacity: '0' }, '100%': { opacity: '1' } },
       },
       animation: {
         fadeUp: 'fadeUp .35s ease-out both',

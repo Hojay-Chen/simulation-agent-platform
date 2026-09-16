@@ -67,7 +67,7 @@ export function Clients() {
 
   return (
     <div className="space-y-5">
-      <h1 className="text-lg font-medium text-cocoa-100">API 客户端</h1>
+      <h1 className="text-lg font-medium text-ink">API 客户端</h1>
 
       {!adminKey && (
         <Notice>
@@ -89,22 +89,22 @@ export function Clients() {
           {data && data.length > 0 && (
             <table className="w-full text-sm">
               <thead>
-                <tr className="text-left text-xs uppercase tracking-wider text-cocoa-500">
+                <tr className="text-left text-xs uppercase tracking-wider text-ink-faint">
                   <th className="pb-2 font-medium">名称</th>
                   <th className="pb-2 font-medium">Key 前缀</th>
                   <th className="pb-2 font-medium">创建于</th>
                   <th className="pb-2" />
                 </tr>
               </thead>
-              <tbody className="divide-y divide-cocoa-700/70">
+              <tbody className="divide-y divide-line">
                 {data.map((c) => (
                   <tr key={c.clientId}>
-                    <td className="py-2.5 text-cocoa-100">
+                    <td className="py-2.5 text-ink">
                       {c.name}
-                      <span className="ml-2 font-mono text-xs text-cocoa-500">{c.clientId}</span>
+                      <span className="ml-2 font-mono text-xs text-ink-faint">{c.clientId}</span>
                     </td>
-                    <td className="py-2.5 font-mono text-xs text-cocoa-400">{c.apiKeyPrefix}…</td>
-                    <td className="py-2.5 text-xs text-cocoa-500">{c.createdAt.slice(0, 10)}</td>
+                    <td className="py-2.5 font-mono text-xs text-ink-soft">{c.apiKeyPrefix}…</td>
+                    <td className="py-2.5 text-xs text-ink-faint">{c.createdAt.slice(0, 10)}</td>
                     <td className="py-2.5 text-right">
                       <Button
                         variant="danger"
@@ -173,10 +173,10 @@ function IssuedKey({ issued, onUse, onDismiss }: {
   }
 
   return (
-    <Panel title={`「${issued.name}」的 API Key`} className="border-jade/50">
+    <Panel title={`「${issued.name}」的 API Key`} className="border-ok/40">
       <div className="space-y-3">
         <Notice>{issued.notice}</Notice>
-        <code className="block overflow-x-auto rounded-lg border border-cocoa-600 bg-cocoa-900 px-3 py-2.5 font-mono text-sm text-jade-soft">
+        <code className="block overflow-x-auto rounded-lg border border-line bg-raised px-3 py-2.5 font-mono text-sm text-ok">
           {issued.apiKey}
         </code>
         <div className="flex flex-wrap items-center gap-2">

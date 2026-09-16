@@ -35,7 +35,7 @@ export function AgentState() {
   return (
     <div className="mx-auto max-w-2xl space-y-5">
       <div className="flex items-center justify-between">
-        <Link to="/" className="inline-flex items-center gap-1.5 text-sm text-cocoa-400 hover:text-cocoa-200">
+        <Link to="/" className="inline-flex items-center gap-1.5 text-sm text-ink-soft hover:text-ink">
           <ArrowLeft size={14} />返回 Agents
         </Link>
         <Button variant="ghost" onClick={reload}>
@@ -46,8 +46,8 @@ export function AgentState() {
       <Panel
         title={
           <div className="flex items-center gap-2">
-            <h2 className="text-sm font-medium text-cocoa-100">{data?.name ?? '实时状态'}</h2>
-            <span className="font-mono text-xs text-cocoa-500">{agentId}</span>
+            <h2 className="text-sm font-medium text-ink">{data?.name ?? '实时状态'}</h2>
+            <span className="font-mono text-xs text-ink-faint">{agentId}</span>
           </div>
         }
       >
@@ -56,7 +56,7 @@ export function AgentState() {
 
         {data && <StateBody state={data} />}
 
-        <p className="mt-5 text-xs leading-relaxed text-cocoa-500">
+        <p className="mt-5 text-xs leading-relaxed text-ink-faint">
           每 {POLL_MS / 1000} 秒自动重取一次。这里是纯数据面 —— 打开本页不会触发任何认知;
           字段的推进只发生在 agent 收到消息之后。
         </p>
@@ -75,7 +75,7 @@ function StateBody({ state }: { state: AgentStateData }) {
     return (
       <div className="space-y-3">
         <Empty>尚未初始化</Empty>
-        <p className="text-center text-xs text-cocoa-500">
+        <p className="text-center text-xs text-ink-faint">
           认知链还没为这个 agent 建出 state 行 —— 它收到第一条消息后才会出现。
           {state.note && <span className="mt-1 block">{state.note}</span>}
         </p>
@@ -102,10 +102,10 @@ function StateBody({ state }: { state: AgentStateData }) {
 
 function Metric({ label, value, hint }: { label: string; value: string; hint?: string }) {
   return (
-    <div className="rounded-lg border border-cocoa-600 bg-cocoa-900 px-4 py-3">
-      <p className="text-xs uppercase tracking-wider text-cocoa-500">{label}</p>
-      <p className="mt-1 truncate font-mono text-lg text-ember-soft" title={value}>{value}</p>
-      {hint && <p className="mt-0.5 text-xs text-cocoa-500">{hint}</p>}
+    <div className="rounded-lg border border-line bg-raised px-4 py-3">
+      <p className="text-xs uppercase tracking-wider text-ink-faint">{label}</p>
+      <p className="mt-1 truncate font-mono text-lg text-accent" title={value}>{value}</p>
+      {hint && <p className="mt-0.5 text-xs text-ink-faint">{hint}</p>}
     </div>
   )
 }

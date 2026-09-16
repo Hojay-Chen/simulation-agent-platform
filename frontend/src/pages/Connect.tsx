@@ -80,10 +80,10 @@ export function Connect() {
             >
               清除
             </Button>
-            {saved && <span className="text-xs text-jade-soft">已保存</span>}
+            {saved && <span className="text-xs text-ok">已保存</span>}
           </div>
 
-          <p className="text-xs leading-relaxed text-cocoa-500">
+          <p className="text-xs leading-relaxed text-ink-faint">
             存在 <code>sessionStorage</code>(不在 localStorage): 管理钥能换出任意客户端钥,
             不该在关掉标签页后继续留在这台机器上。谁要看 agent 实时状态, 用哪把钥匙就填哪把 ——
             缺的那把只会让对应的页面报错, 不影响另一面。
@@ -92,20 +92,20 @@ export function Connect() {
       </Panel>
 
       <Panel title="钥匙从哪来">
-        <ol className="list-decimal space-y-2 pl-5 text-sm text-cocoa-300">
+        <ol className="list-decimal space-y-2 pl-5 text-sm text-ink-soft">
           <li>
-            服务端启动时注入 <code className="text-ember-soft">OPENAPI_ADMIN_KEY</code> ——
+            服务端启动时注入 <code className="text-accent">OPENAPI_ADMIN_KEY</code> ——
             这就是管理密钥, 由运维持有。
           </li>
           <li>
-            在「API 客户端」页用它<a className="mx-1 text-ember-soft" href="/clients">创建一个客户端</a> ——
+            在「API 客户端」页用它<a className="mx-1 text-accent" href="/clients">创建一个客户端</a> ——
             明文 <code>sap_…</code> 只在创建响应里出现一次。
           </li>
           <li>
             把刚拿到的 <code>sap_…</code> 填进上面的客户端钥 —— 之后就能建/列/改 agent 了。
           </li>
         </ol>
-        <p className="mt-3 flex items-start gap-2 text-xs text-cocoa-500">
+        <p className="mt-3 flex items-start gap-2 text-xs text-ink-faint">
           <KeyRound size={13} className="mt-0.5 shrink-0" />
           丢失的钥匙没有任何途径取回 —— 库里只有 sha256。吊销客户端重建即可(其名下 agent 保留)。
         </p>

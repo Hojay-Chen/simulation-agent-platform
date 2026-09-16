@@ -19,7 +19,7 @@ export function AgentList({ agents, selectedId, onSelect }: {
   }
 
   return (
-    <ul className="divide-y divide-cocoa-700/70">
+    <ul className="divide-y divide-line">
       {agents.map((a) => {
         const selected = a.agentId === selectedId
         return (
@@ -28,20 +28,20 @@ export function AgentList({ agents, selectedId, onSelect }: {
               type="button"
               onClick={() => onSelect?.(a.agentId)}
               className={`flex w-full items-center gap-3 px-4 py-3 text-left transition ${
-                selected ? 'bg-cocoa-800' : 'hover:bg-cocoa-800/60'
+                selected ? 'bg-accent-soft' : 'hover:bg-sunken'
               }`}
             >
-              <span className="grid h-9 w-9 shrink-0 place-items-center rounded-lg border border-cocoa-600 bg-cocoa-900 text-ember">
+              <span className="grid h-9 w-9 shrink-0 place-items-center rounded-lg border border-line bg-raised text-accent">
                 <Bot size={16} />
               </span>
               <span className="min-w-0 flex-1">
-                <span className="block truncate text-sm text-cocoa-100">{a.name || a.agentId}</span>
-                <span className="block truncate font-mono text-xs text-cocoa-500">{a.agentId}</span>
+                <span className="block truncate text-sm text-ink">{a.name || a.agentId}</span>
+                <span className="block truncate font-mono text-xs text-ink-faint">{a.agentId}</span>
               </span>
-              <span className="shrink-0 text-xs text-cocoa-500">
+              <span className="shrink-0 text-xs text-ink-faint">
                 {a.createdAt ? a.createdAt.slice(0, 10) : '—'}
               </span>
-              <ChevronRight size={14} className="shrink-0 text-cocoa-600" />
+              <ChevronRight size={14} className="shrink-0 text-ink-faint" />
             </button>
           </li>
         )

@@ -93,7 +93,7 @@ export function Agents() {
   return (
     <div className="space-y-5">
       <div className="flex items-center justify-between">
-        <h1 className="text-lg font-medium text-cocoa-100">Agents</h1>
+        <h1 className="text-lg font-medium text-ink">Agents</h1>
         <Button variant="ghost" onClick={reload}>
           <RefreshCw size={13} />
           刷新
@@ -191,8 +191,8 @@ function AgentDetail({ agent, error, onDeleted, onPersonaUpdated }: {
       <Panel
         title={
           <div className="flex items-center gap-2">
-            <h2 className="text-sm font-medium text-cocoa-100">{agent.name || agent.agentId}</h2>
-            <span className="font-mono text-xs text-cocoa-500">{agent.agentId}</span>
+            <h2 className="text-sm font-medium text-ink">{agent.name || agent.agentId}</h2>
+            <span className="font-mono text-xs text-ink-faint">{agent.agentId}</span>
           </div>
         }
         action={
@@ -208,24 +208,24 @@ function AgentDetail({ agent, error, onDeleted, onPersonaUpdated }: {
       >
         <dl className="grid grid-cols-2 gap-3 text-sm">
           <div>
-            <dt className="text-xs uppercase tracking-wider text-cocoa-500">状态</dt>
-            <dd className="text-cocoa-200">{agent.status}</dd>
+            <dt className="text-xs uppercase tracking-wider text-ink-faint">状态</dt>
+            <dd className="text-ink">{agent.status}</dd>
           </div>
           <div>
-            <dt className="text-xs uppercase tracking-wider text-cocoa-500">创建于</dt>
-            <dd className="text-cocoa-200">{agent.createdAt?.slice(0, 19).replace('T', ' ') ?? '—'}</dd>
+            <dt className="text-xs uppercase tracking-wider text-ink-faint">创建于</dt>
+            <dd className="text-ink">{agent.createdAt?.slice(0, 19).replace('T', ' ') ?? '—'}</dd>
           </div>
           <div className="col-span-2">
-            <dt className="text-xs uppercase tracking-wider text-cocoa-500">归属客户端</dt>
-            <dd className="font-mono text-xs text-cocoa-400">{agent.clientId}</dd>
+            <dt className="text-xs uppercase tracking-wider text-ink-faint">归属客户端</dt>
+            <dd className="font-mono text-xs text-ink-soft">{agent.clientId}</dd>
           </div>
         </dl>
 
         <div className="mt-5">
-          <p className="mb-1.5 text-xs uppercase tracking-wider text-cocoa-500">当前人格</p>
+          <p className="mb-1.5 text-xs uppercase tracking-wider text-ink-faint">当前人格</p>
           {agent.persona
             ? (
-              <pre className="max-h-64 overflow-auto rounded-lg border border-cocoa-600 bg-cocoa-900 p-3 font-mono text-xs leading-relaxed text-cocoa-300">
+              <pre className="max-h-64 overflow-auto rounded-lg border border-line bg-raised p-3 font-mono text-xs leading-relaxed text-ink-soft">
                 {JSON.stringify(agent.persona, null, 2)}
               </pre>
             )

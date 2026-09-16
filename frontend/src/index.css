@@ -2,15 +2,73 @@
 @tailwind components;
 @tailwind utilities;
 
+/**
+ * 主题变量 —— 与仓 1 聊天前端 `src/index.css` 的这两块**逐字相同** (见 tailwind.config.js
+ * 文件头里为什么不靠人去同步)。
+ *
+ * 亮色是默认: `:root` 就是亮色, 只有 `.dark` 覆盖它。`<html class="dark">` 由
+ * `index.html` 里那段内联脚本在首屏渲染前写上, 之后由 `stores/theme.ts` 维护。
+ *
+ * 值写成 `R G B` 三段而不是 `#hex`, 因为 Tailwind 的 `<alpha-value>` 要往里插
+ * 透明度 —— 写成 hex 的话 `bg-accent/10` 这类写法会静默失效。
+ */
 :root {
-  --color-bg: #14100e;
-  --color-surface: #1a1512;
-  --color-raised: #211a16;
-  --color-line: #332a21;
-  --color-ink: #efe5d6;
-  --color-ink-soft: #a89a8e;
-  --color-ember: #d97757;
-  --color-ember-soft: #e8b467;
+  --surface: 255 255 255;
+  --raised: 255 255 255;
+  --sunken: 244 245 247;
+  --scrim: 15 23 42;
+
+  --line: 226 232 240;
+  --line-strong: 203 213 225;
+
+  --ink: 15 23 42;
+  --ink-soft: 71 85 105;
+  --ink-faint: 148 163 184;
+
+  /* 电光蓝 #2563EB */
+  --accent: 37 99 235;
+  --accent-soft: 219 234 254;
+  --accent-ink: 255 255 255;
+
+  --ok: 22 163 74;
+  --warn: 217 119 6;
+  --danger: 220 38 38;
+
+  --bubble-in: 244 245 247;
+  --bubble-out: 37 99 235;
+  --bubble-out-ink: 255 255 255;
+
+  --shadow-pop: 0 8px 32px -8px rgb(15 23 42 / 0.16), 0 2px 8px -2px rgb(15 23 42 / 0.08);
+  color-scheme: light;
+}
+
+.dark {
+  --surface: 9 11 15;
+  --raised: 17 20 26;
+  --sunken: 13 16 21;
+  --scrim: 0 0 0;
+
+  --line: 31 36 45;
+  --line-strong: 45 52 64;
+
+  --ink: 237 241 245;
+  --ink-soft: 148 163 184;
+  --ink-faint: 100 116 139;
+
+  /* 暗底上提亮一档 —— 同一个 #2563EB 在近黑背景上对比度不够 */
+  --accent: 59 130 246;
+  --accent-soft: 30 58 138;
+  --accent-ink: 255 255 255;
+
+  --ok: 52 211 153;
+  --warn: 251 191 36;
+  --danger: 248 113 113;
+
+  --bubble-in: 26 31 40;
+  --bubble-out: 37 99 235;
+  --bubble-out-ink: 255 255 255;
+
+  --shadow-pop: 0 8px 32px -8px rgb(0 0 0 / 0.5), 0 2px 8px -2px rgb(0 0 0 / 0.3);
   color-scheme: dark;
 }
 
@@ -20,26 +78,76 @@
     text-rendering: optimizeLegibility;
   }
   body {
-    @apply bg-cocoa-950 text-cocoa-100 font-sans;
+    @apply bg-surface text-ink font-sans;
   }
   ::selection {
-    background: rgba(217, 119, 87, 0.28);
+    background: rgb(var(--accent) / 0.22);
+  }
+  /**
+   * 时间戳、未读数、ID 一律等宽数字。
+   * 控制台里这一条比聊天端更值钱: 一屏全是 agent id、时间、计数, 比例数字会让
+   * 整张表在每次轮询刷新时左右抖。
+   */
+  .tnum {
+    font-variant-numeric: tabular-nums;
   }
   ::-webkit-scrollbar {
     width: 10px;
     height: 10px;
   }
   ::-webkit-scrollbar-thumb {
-    background: #332a21;
+    background: rgb(var(--line));
     border-radius: 8px;
     border: 2px solid transparent;
     background-clip: padding-box;
   }
   ::-webkit-scrollbar-thumb:hover {
-    background: #473a2d;
+    background: rgb(var(--line-strong));
     background-clip: padding-box;
+    border: 2px solid transparent;
   }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  /** 行内的技术标识。旧调色板里这一处是浅橙, 在白底上几乎看不见 —— 换成强调色 */
   code {
-    @apply font-mono text-ember-soft;
+    @apply font-mono text-accent;
+  }
+}
+
+@layer components {
+  /* 与仓 1 同名的语义类 —— 定义也照抄, 这样两边的按钮是同一个按钮 */
+  .btn {
+    @apply inline-flex items-center justify-center gap-2 rounded-lg px-3.5 py-2 text-sm font-medium transition-colors select-none;
+  }
+  .btn-primary {
+    @apply btn bg-accent text-accent-ink hover:bg-accent/90;
+  }
+  .btn-ghost {
+    @apply btn bg-sunken text-ink hover:bg-line;
+  }
+  .btn-outline {
+    @apply btn border border-line text-ink hover:border-line-strong hover:bg-sunken;
+  }
+  .btn-danger {
+    @apply btn border border-danger/30 bg-danger/10 text-danger hover:bg-danger/15;
+  }
+  .input {
+    @apply w-full rounded-lg border border-line bg-sunken px-3.5 py-2.5 text-sm text-ink
+           placeholder:text-ink-faint focus:outline-none focus:border-accent
+           focus:ring-1 focus:ring-accent/25 transition;
+  }
+  .card {
+    @apply rounded-xl border border-line bg-raised;
+  }
+  .chip {
+    @apply inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-xs;
+  }
+}
+
+@layer utilities {
+  /** 底部安全区 */
+  .pb-safe {
+    padding-bottom: env(safe-area-inset-bottom);
   }
 }
