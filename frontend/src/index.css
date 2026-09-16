@@ -118,7 +118,7 @@
 @layer components {
   /* 与仓 1 同名的语义类 —— 定义也照抄, 这样两边的按钮是同一个按钮 */
   .btn {
-    @apply inline-flex items-center justify-center gap-2 rounded-lg px-3.5 py-2 text-sm font-medium transition-colors select-none;
+    @apply inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-lg px-3.5 py-2 text-sm font-medium transition-colors select-none;
   }
   .btn-primary {
     @apply btn bg-accent text-accent-ink hover:bg-accent/90;
@@ -141,7 +141,7 @@
     @apply rounded-xl border border-line bg-raised;
   }
   .chip {
-    @apply inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-xs;
+    @apply inline-flex items-center gap-1 whitespace-nowrap rounded-full px-2.5 py-0.5 text-xs;
   }
 }
 
