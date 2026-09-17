@@ -67,11 +67,9 @@ export function Clients() {
 
   return (
     <div className="space-y-5">
-      <h1 className="text-lg font-medium text-ink">API 客户端</h1>
-
       {!adminKey && (
         <Notice>
-          还没填管理密钥 —— 本页的请求都会失败。到<Link className="mx-1 underline" to="/connect">接入</Link>页填入
+          还没填管理密钥 —— 本页的请求都会失败。到<Link className="mx-1 underline" to="/access?tab=connect">凭据</Link>页填入
           <code className="mx-1">X-Admin-Key</code>。
         </Notice>
       )}

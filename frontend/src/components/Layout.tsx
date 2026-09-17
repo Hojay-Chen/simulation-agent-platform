@@ -1,49 +1,74 @@
 import { NavLink, Outlet } from 'react-router-dom'
-import { Bot, KeyRound, Moon, Sun, Users, ShieldCheck, ShieldAlert } from 'lucide-react'
+import {
+  Bot,
+  Boxes,
+  LayoutDashboard,
+  Moon,
+  Server,
+  Sun,
+  KeyRound,
+  ShieldCheck,
+  ShieldAlert,
+  UserCheck,
+  UserX,
+} from 'lucide-react'
 import { useSessionStore } from '@/stores/session'
 import { useThemeStore } from '@/stores/theme'
 import { Chip } from './ui'
 
 const NAV = [
-  { to: '/', label: 'Agents', icon: Bot, end: true },
-  { to: '/clients', label: 'API 客户端', icon: Users, end: false },
-  { to: '/connect', label: '接入', icon: KeyRound, end: false },
+  { to: '/', label: 'Dashboard', icon: LayoutDashboard, end: true },
+  { to: '/agents', label: 'Agents', icon: Bot, end: false },
+  { to: '/applications', label: 'Applications', icon: Boxes, end: false },
+  // 路径是 /access 而不是 /api —— `/api/**` 归后端, SPA 占它会让"刷新这一页"变成
+  // 拿 document 请求打后端(403)。栏目名照旧叫 API, 那是给人看的。
+  { to: '/access', label: 'API', icon: KeyRound, end: false },
+  { to: '/system', label: 'System', icon: Server, end: false },
 ] as const
 
 /**
  * 控制台外壳: 顶部栏 + 侧边导航。
  *
- * 与仓 1 聊天前端的 IM 布局(会话侧栏)刻意不同 —— 这里是管理工具, 用户
- * 关心的第一件事是"我手里两把钥匙到位了没有", 所以顶部常驻两枚状态灯。
- * 缺哪把, 对应的那个面就是死的, 而这个事实必须在每一个页面都看得见。
- * (这一条是原设计里唯一被完整保留下来的东西 —— 它是对的, 只是换了一套视觉语言。)
+ * <h2>页头那三盏灯是这个控制台最重要的东西</h2>
+ *
+ * 它同时握着**四份互不相通的凭据**, 而任何一页出问题的症状都是一句 401 或一个空
+ * 列表 —— 那些症状几乎从不指向真正的原因。所以三盏灯(管理钥 / 客户端钥 / 登录)
+ * 常驻在每一个页面上: 缺哪一份, 对应的那几张面就是死的, 而这个事实必须随时看得见。
+ *
+ * (这一条从第一版就留着, 是对的 —— 只是从两盏灯长到了三盏。)
  */
 export function Layout() {
   const adminKey = useSessionStore((s) => s.adminKey)
   const clientKey = useSessionStore((s) => s.clientKey)
+  const studioToken = useSessionStore((s) => s.studioToken)
+  const studioUser = useSessionStore((s) => s.studioUser)
   const { theme, toggle } = useThemeStore()
 
   return (
     <div className="flex min-h-screen flex-col bg-surface">
       <header className="flex items-center justify-between gap-3 border-b border-line bg-raised px-4 py-3 md:px-6">
         <div className="flex min-w-0 items-center gap-2.5">
-          <span className="grid h-7 w-7 shrink-0 place-items-center rounded-lg bg-accent text-accent-ink">
+          <NavLink to="/" className="grid h-7 w-7 shrink-0 place-items-center rounded-lg bg-accent text-accent-ink">
             <Bot size={16} />
-          </span>
+          </NavLink>
           <span className="truncate text-sm font-medium tracking-wide text-ink">
-            Luxera Simulation Agent
+            Being Studio
             {/* 窄屏放不下 —— 它本来也只是个定语, 去掉不影响这句话的意思 */}
-            <span className="ml-2 hidden text-ink-faint sm:inline">控制台</span>
+            <span className="ml-2 hidden text-ink-faint sm:inline">仿真 Agent 控制台</span>
           </span>
         </div>
         <div className="flex shrink-0 items-center gap-2">
-          {/* 钥匙的名字在窄屏缩成图标 —— 但状态灯本身**不**缩掉, 见文件头 */}
+          {/* 灯的名字在窄屏缩成图标 —— 但状态灯本身**不**缩掉 */}
           {adminKey
-            ? <Chip tone="ok"><ShieldCheck size={12} /><span className="ml-1 hidden sm:inline">管理钥已配</span></Chip>
-            : <Chip tone="warn"><ShieldAlert size={12} /><span className="ml-1 hidden sm:inline">缺管理钥</span></Chip>}
+            ? <Chip tone="ok"><ShieldCheck size={12} /><span className="ml-1 hidden lg:inline">管理钥</span></Chip>
+            : <Chip tone="warn"><ShieldAlert size={12} /><span className="ml-1 hidden lg:inline">缺管理钥</span></Chip>}
           {clientKey
-            ? <Chip tone="ok"><KeyRound size={12} /><span className="ml-1 hidden sm:inline">客户端钥已配</span></Chip>
-            : <Chip tone="warn"><KeyRound size={12} /><span className="ml-1 hidden sm:inline">缺客户端钥</span></Chip>}
+            ? <Chip tone="ok"><KeyRound size={12} /><span className="ml-1 hidden lg:inline">客户端钥</span></Chip>
+            : <Chip tone="warn"><KeyRound size={12} /><span className="ml-1 hidden lg:inline">缺客户端钥</span></Chip>}
+          {/* 第三盏: 票是**聊天平台**发的, 所以未登录时给的链接是"用你的账号登录"而不是"注册" */}
+          {studioToken
+            ? <Chip tone="ok"><UserCheck size={12} /><span className="ml-1 hidden lg:inline">{studioUser || '已登录'}</span></Chip>
+            : <NavLink to="/system"><Chip tone="warn"><UserX size={12} /><span className="ml-1 hidden lg:inline">未登录</span></Chip></NavLink>}
           <button
             type="button"
             onClick={toggle}
@@ -83,9 +108,11 @@ export function Layout() {
             </NavLink>
           ))}
           <p className="mt-6 hidden px-3 text-xs leading-relaxed text-ink-faint md:block">
-            agent 详情页里的「实时状态」由
+            Dashboard 与 Agents 里那一栏读的是
             <span className="mx-1 font-mono text-ink-soft">server:8091</span>
-            的认知链持续写入, 控制台读同一张表。
+            的内省接口, 要用户 JWT; API 页那两栏读的是
+            <span className="mx-1 font-mono text-ink-soft">openapi:8092</span>
+            , 要钥匙。四张面的完整清单在 System。
           </p>
         </nav>
 

@@ -1,81 +1,121 @@
-import { useEffect, useState } from 'react'
-import { Link, useSearchParams } from 'react-router-dom'
-import { Activity, RefreshCw, Trash2 } from 'lucide-react'
+import { useState } from 'react'
+import { Link, useNavigate } from 'react-router-dom'
+import { Bot, ChevronRight, RefreshCw, Trash2 } from 'lucide-react'
 import {
   ApiError,
   createAgent,
   deleteAgent,
-  getAgent,
   listAgents,
-  updatePersona,
+  listCompanions,
   type AgentSummary,
 } from '@/api/client'
 import { useAsync } from '@/lib/useAsync'
 import { useSessionStore } from '@/stores/session'
 import { AgentCreateForm, type AgentFormInput } from '@/components/AgentCreateForm'
-import { AgentList } from '@/components/AgentList'
-import { Button, Empty, ErrorNote, Field, Notice, Panel, inputClass } from '@/components/ui'
+import { Button, Empty, ErrorNote, Notice, Panel } from '@/components/ui'
+import { RequireStudio } from '@/components/StudioLogin'
 
 /**
- * Agents —— 列表 + 详情 + 创建, 一页三态。
+ * Agents —— 两张名单在一页上, **因为它们本来就是两回事**。
  *
- * 选中项落在 URL query(`?id=`)而不是组件状态: 刷新/分享链接后还停在同一个
- * agent 上, 从状态页返回(带 ?id=)也直接落回原处。
+ * <h2>为什么是两栏而不是一栏</h2>
+ *
+ * 「我的 agents」按**人**归属(`GET /api/companions`, 用户 JWT): 我在聊天平台上认识
+ * 的那几个数字人。「API 客户端建的 agents」按**客户端**归属(`GET /api/v1/openapi/agents`,
+ * `sap_` 钥匙): 某个程序自己建的程序化 agent。
+ *
+ * 把它们合成一栏看起来更整齐, 但会立刻带来一个没有答案的问题: 删除一个"我的 agent"
+ * 到底该调哪个端点? 两者的鉴权模型完全不同 —— 一个是"你是这个人吗", 一个是"你是这个
+ * 客户端吗"。**分栏就是这条界线的样子**, 而它值得被看见。
+ *
+ * 详情页在右边那一套(`/agents/:id`), 两张名单里点进去是同一个页面: `companions.id`
+ * 与 openapi 的 `agentId` 是**同一个值** —— agent 平台标识 agent 个体的那个 id。
+ * 账号ID(`agent_…`)是另一回事, 那是聊天平台侧的标识, 见详情页「身份」。
  */
 export function Agents() {
-  const clientKey = useSessionStore((s) => s.clientKey)
-  const [params, setParams] = useSearchParams()
-  const selectedId = params.get('id')
+  return (
+    <div className="space-y-5">
+      <h1 className="text-lg font-medium text-ink">Agents</h1>
+      <RequireStudio why="「我的 agents」按你在聊天平台上的归属过滤 —— 需要先登录。">
+        <MyAgents />
+      </RequireStudio>
+      <ClientAgents />
+    </div>
+  )
+}
 
+/** 人这一侧 —— 与首页同一个数据源, 所以两边数量永远一致。 */
+function MyAgents() {
+  const { data, loading, error, reload } = useAsync(() => listCompanions(), [])
+
+  return (
+    <Panel
+      title="我的 agents"
+      action={
+        <span className="flex items-center gap-2">
+          <span className="text-xs text-ink-faint">
+            按人在聊天平台上的归属 · {data?.length ?? 0}
+          </span>
+          <Button variant="ghost" onClick={reload}><RefreshCw size={13} />刷新</Button>
+        </span>
+      }
+    >
+      <ErrorNote error={error} />
+      {loading && !data && <Empty>读取中…</Empty>}
+      {data && data.length === 0 && (
+        <Empty>你在聊天平台上还没有 agent。到聊天平台里「一键创建 agent 好友」建一个。</Empty>
+      )}
+      {data && data.length > 0 && (
+        <ul className="divide-y divide-line">
+          {data.map((c) => (
+            <li key={c.id}>
+              <Link
+                to={`/agents/${encodeURIComponent(c.id)}`}
+                className="flex items-center gap-3 px-1 py-3 transition hover:bg-sunken/60"
+              >
+                <span className="grid h-9 w-9 shrink-0 place-items-center rounded-lg border border-line bg-raised text-accent">
+                  <Bot size={16} />
+                </span>
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate text-sm text-ink">{c.name || c.id}</span>
+                  <span className="block truncate font-mono text-xs text-ink-faint">
+                    {c.handle || '还没有账号ID'}
+                  </span>
+                </span>
+                <span className="shrink-0 text-xs text-ink-faint">{c.relationshipStage ?? ''}</span>
+                <ChevronRight size={14} className="shrink-0 text-ink-faint" />
+              </Link>
+            </li>
+          ))}
+        </ul>
+      )}
+    </Panel>
+  )
+}
+
+/** 客户端这一侧 —— 建/列/删都走 `sap_` 钥匙, 与上面那一栏互不相通。 */
+function ClientAgents() {
+  const clientKey = useSessionStore((s) => s.clientKey)
+  const navigate = useNavigate()
   const { data: agents, loading, error, reload, setData } = useAsync(() => listAgents(), [])
 
-  const [createBusy, setCreateBusy] = useState(false)
+  const [busy, setBusy] = useState(false)
   const [createError, setCreateError] = useState<string | null>(null)
-  const [detail, setDetail] = useState<AgentSummary | null>(null)
-  const [detailError, setDetailError] = useState<string | null>(null)
-
-  // 选中变化 → 拉详情。详情页含 persona, 列表接口不带。
-  useEffect(() => {
-    if (!selectedId) {
-      setDetail(null)
-      setDetailError(null)
-      return
-    }
-    let alive = true
-    setDetailError(null)
-    getAgent(selectedId)
-      .then((d) => { if (alive) setDetail(d) })
-      .catch((e: unknown) => {
-        if (alive) {
-          setDetail(null)
-          setDetailError(e instanceof ApiError ? e.message : String(e))
-        }
-      })
-    return () => { alive = false }
-  }, [selectedId])
-
-  function select(id: string | null) {
-    const next = new URLSearchParams(params)
-    if (id) next.set('id', id)
-    else next.delete('id')
-    setParams(next, { replace: true })
-  }
 
   async function onCreate(input: AgentFormInput) {
-    setCreateBusy(true)
+    setBusy(true)
     setCreateError(null)
     try {
       const created = await createAgent({
         description: input.description.trim(),
         relationshipType: input.relationshipType,
       })
-      // 本地先插进列表 —— 不等 reload 的往返, 创建完立刻能选中看详情。
       setData([created, ...(agents ?? [])])
-      select(created.agentId)
+      navigate(`/agents/${encodeURIComponent(created.agentId)}`)
     } catch (e) {
       setCreateError(e instanceof ApiError ? e.message : String(e))
     } finally {
-      setCreateBusy(false)
+      setBusy(false)
     }
   }
 
@@ -84,177 +124,69 @@ export function Agents() {
     try {
       await deleteAgent(agent.agentId)
       setData((agents ?? []).filter((a) => a.agentId !== agent.agentId))
-      if (selectedId === agent.agentId) select(null)
     } catch (e) {
-      setDetailError(e instanceof ApiError ? e.message : String(e))
+      setCreateError(e instanceof ApiError ? e.message : String(e))
     }
   }
 
   return (
-    <div className="space-y-5">
-      <div className="flex items-center justify-between">
-        <h1 className="text-lg font-medium text-ink">Agents</h1>
-        <Button variant="ghost" onClick={reload}>
-          <RefreshCw size={13} />
-          刷新
-        </Button>
-      </div>
-
-      {!clientKey && (
-        <Notice>
-          还没填客户端 API Key —— 列表与创建都会失败。到
-          <Link className="mx-1 underline" to="/connect">接入</Link>页填入, 或先在
-          <Link className="mx-1 underline" to="/clients">API 客户端</Link>页发放一把。
-        </Notice>
-      )}
-
-      <div className="grid gap-5 lg:grid-cols-[1.1fr_1.4fr]">
-        <Panel title={`我的 agents (${agents?.length ?? 0})`}>
-          <ErrorNote error={error} />
-          {loading && !agents && <Empty>读取中…</Empty>}
-          {agents && (
-            <AgentList agents={agents} selectedId={selectedId} onSelect={(id) => select(id)} />
-          )}
-        </Panel>
-
-        <div className="space-y-5">
-          {selectedId ? (
-            <AgentDetail
-              agent={detail}
-              error={detailError}
-              onDeleted={onDelete}
-              onPersonaUpdated={(p) => setDetail((d) => (d ? { ...d, persona: p } : d))}
-            />
-          ) : (
-            <Panel title="创建 agent">
-              <AgentCreateForm onSubmit={onCreate} submitting={createBusy} error={createError} />
-            </Panel>
-          )}
-        </div>
-      </div>
-    </div>
-  )
-}
-
-/** 详情 —— 读 persona / 重编译 persona / 软删 / 跳状态页。 */
-function AgentDetail({ agent, error, onDeleted, onPersonaUpdated }: {
-  agent: AgentSummary | null
-  error: string | null
-  onDeleted: (agent: AgentSummary) => void
-  onPersonaUpdated: (persona: AgentSummary['persona']) => void
-}) {
-  const [description, setDescription] = useState('')
-  const [reason, setReason] = useState('')
-  const [busy, setBusy] = useState(false)
-  const [err, setErr] = useState<string | null>(null)
-  const [fieldError, setFieldError] = useState<string | null>(null)
-
-  useEffect(() => { setErr(null); setFieldError(null) }, [agent?.agentId])
-
-  if (error) {
-    return (
-      <Panel title="详情">
-        <ErrorNote error={error} />
-      </Panel>
-    )
-  }
-  if (!agent) {
-    return (
-      <Panel title="详情">
-        <Empty>读取中…</Empty>
-      </Panel>
-    )
-  }
-
-  async function submitPersona() {
-    if (!description.trim()) {
-      setFieldError('写一段新的描述 —— 平台会重编译成人格并落一个新版本')
-      return
-    }
-    setFieldError(null)
-    setBusy(true)
-    setErr(null)
-    try {
-      const r = await updatePersona(agent!.agentId, description.trim(), reason.trim() || undefined)
-      onPersonaUpdated(r.persona)
-      setDescription('')
-      setReason('')
-    } catch (e) {
-      setErr(e instanceof ApiError ? e.message : String(e))
-    } finally {
-      setBusy(false)
-    }
-  }
-
-  return (
-    <>
+    <div className="grid gap-5 lg:grid-cols-[1.1fr_1fr]">
       <Panel
-        title={
-          <div className="flex items-center gap-2">
-            <h2 className="text-sm font-medium text-ink">{agent.name || agent.agentId}</h2>
-            <span className="font-mono text-xs text-ink-faint">{agent.agentId}</span>
-          </div>
-        }
+        title="API 客户端建的 agents"
         action={
-          <div className="flex items-center gap-2">
-            <Link to={`/agents/${encodeURIComponent(agent.agentId)}/state`}>
-              <Button variant="ghost"><Activity size={13} />实时状态</Button>
-            </Link>
-            <Button variant="danger" onClick={() => onDeleted(agent)}>
-              <Trash2 size={13} />删除
-            </Button>
-          </div>
+          <span className="flex items-center gap-2">
+            <span className="text-xs text-ink-faint">按客户端归属 · {agents?.length ?? 0}</span>
+            <Button variant="ghost" onClick={reload}><RefreshCw size={13} />刷新</Button>
+          </span>
         }
       >
-        <dl className="grid grid-cols-2 gap-3 text-sm">
-          <div>
-            <dt className="text-xs uppercase tracking-wider text-ink-faint">状态</dt>
-            <dd className="text-ink">{agent.status}</dd>
+        {!clientKey && (
+          <div className="mb-3">
+            <Notice>
+              还没填客户端钥 —— 这一栏与创建都会失败。到
+              <Link className="mx-1 underline" to="/access">API</Link>页发放/填入一把。
+            </Notice>
           </div>
-          <div>
-            <dt className="text-xs uppercase tracking-wider text-ink-faint">创建于</dt>
-            <dd className="text-ink">{agent.createdAt?.slice(0, 19).replace('T', ' ') ?? '—'}</dd>
-          </div>
-          <div className="col-span-2">
-            <dt className="text-xs uppercase tracking-wider text-ink-faint">归属客户端</dt>
-            <dd className="font-mono text-xs text-ink-soft">{agent.clientId}</dd>
-          </div>
-        </dl>
-
-        <div className="mt-5">
-          <p className="mb-1.5 text-xs uppercase tracking-wider text-ink-faint">当前人格</p>
-          {agent.persona
-            ? (
-              <pre className="max-h-64 overflow-auto rounded-lg border border-line bg-raised p-3 font-mono text-xs leading-relaxed text-ink-soft">
-                {JSON.stringify(agent.persona, null, 2)}
-              </pre>
-            )
-            : <Empty>这个 agent 没有可读的人格版本</Empty>}
-        </div>
+        )}
+        <ErrorNote error={error} />
+        {loading && !agents && <Empty>读取中…</Empty>}
+        {agents && agents.length === 0 && <Empty>这个客户端名下还没有 agent。</Empty>}
+        {agents && agents.length > 0 && (
+          <ul className="divide-y divide-line">
+            {agents.map((a) => (
+              <li key={a.agentId} className="flex items-center gap-2 px-1 py-2.5">
+                <Link
+                  to={`/agents/${encodeURIComponent(a.agentId)}`}
+                  className="flex min-w-0 flex-1 items-center gap-3 transition hover:text-accent"
+                >
+                  <span className="grid h-8 w-8 shrink-0 place-items-center rounded-lg border border-line bg-raised text-ink-soft">
+                    <Bot size={14} />
+                  </span>
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate text-sm text-ink">{a.name || a.agentId}</span>
+                    <span className="block truncate font-mono text-xs text-ink-faint">{a.agentId}</span>
+                  </span>
+                </Link>
+                <Button
+                  variant="ghost"
+                  title="软删"
+                  onClick={() => void onDelete(a)}
+                >
+                  <Trash2 size={13} />
+                </Button>
+              </li>
+            ))}
+          </ul>
+        )}
       </Panel>
 
-      <Panel title="重编译人格">
-        <form className="space-y-4" onSubmit={(e) => { e.preventDefault(); void submitPersona() }}>
-          <Field label="新的描述" error={fieldError} hint="不改人格就只改关系/状态是做不到的 —— 每次更新都落一个 persona 新版本。">
-            <textarea
-              className={`${inputClass} min-h-[88px] resize-y`}
-              value={description}
-              onChange={(e) => setDescription(e.target.value)}
-              placeholder="把这个人改成什么样…"
-            />
-          </Field>
-          <Field label="变更原因 (可选)" hint="写进版本记录, 便于日后回看人格是怎么演化的。">
-            <input
-              className={inputClass}
-              value={reason}
-              onChange={(e) => setReason(e.target.value)}
-              placeholder="例: 用户希望她更健谈一些"
-            />
-          </Field>
-          <ErrorNote error={err} />
-          <Button type="submit" disabled={busy}>{busy ? '重编译中…' : '更新人格'}</Button>
-        </form>
+      <Panel title="创建 agent">
+        <p className="mb-4 text-xs leading-relaxed text-ink-faint">
+          这一栏建出来的 agent 属于**上面那把客户端钥**的持有者, 不出现在「我的 agents」里
+          —— 两者是两条独立的归属路径(这正是两个平台互相独立、只通过接口往来的一种体现)。
+        </p>
+        <AgentCreateForm onSubmit={onCreate} submitting={busy} error={createError} />
       </Panel>
-    </>
+    </div>
   )
 }

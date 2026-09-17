@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { Link } from 'react-router-dom'
 import { KeyRound, ShieldCheck } from 'lucide-react'
 import { useSessionStore } from '@/stores/session'
 import { Button, Field, Notice, Panel, inputClass } from '@/components/ui'
@@ -98,7 +99,7 @@ export function Connect() {
             这就是管理密钥, 由运维持有。
           </li>
           <li>
-            在「API 客户端」页用它<a className="mx-1 text-accent" href="/clients">创建一个客户端</a> ——
+            在「API 客户端」页用它<Link className="mx-1 text-accent" to="/access?tab=clients">创建一个客户端</Link> ——
             明文 <code>sap_…</code> 只在创建响应里出现一次。
           </li>
           <li>

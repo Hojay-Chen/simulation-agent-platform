@@ -14,6 +14,19 @@
  * 知道"这个请求该用哪把钥匙"—— 这就是 faceOf() 的全部职责。判定落在 url 上
  * (而不是在每个调用点手写 key), 与仓 1 同一个哲学: **规则一处, 调用点零感知**。
  *
+ * ## 第三张面: Studio(JWT)
+ *
+ * Being Studio(§19)要展示的是 Memory / Relationship / Life / Cognition —— 那些
+ * 数据只在 server:8091 上, 而 8091 的 73 个端点**全部要用户 JWT**; 它的两个钥匙面
+ * 一个都进不去(见 openapi/V9 的边界: 8092 的包白名单被 check-agent.sh 静态钉死,
+ * 认知链包永不进 8092, 所以 Memory/Life 不可能从 openapi 面出来)。
+ *
+ * 于是控制台长出第三张面: `Authorization: Bearer <JWT>` 打 8091。而 JWT 从哪来 ——
+ * **不是**本平台发的。`users` 表由聊天平台拥有(§22: "users 由 Chat 写, Agent 只读"),
+ * 所以控制台把用户凭据交给**聊天平台的登录端点**换一张票, 两仓共享 `app.jwt.secret`,
+ * 8091 的 JwtAuthenticationFilter 认这张票。这不是绕过边界, 这**就是**边界:
+ * 本平台不复制一份用户表, 也不自己发明一套登录。
+ *
  * ## 同源
  *
  * 所有请求都打同源相对路径, 由反向代理决定落到哪个上游 —— dev 是 vite 的
@@ -23,16 +36,47 @@
 /** 管理面的路径前缀 —— faceOf() 的唯一判据。 */
 export const ADMIN_FACE_PATH = '/api/v1/openapi/clients'
 
-export type Face = 'admin' | 'client'
+/**
+ * 开放面的前缀。它必须排在 studio 之前判定 —— 两个面都在 `/api/` 之下,
+ * 而顺序搞反的后果是"用一个 sap_ 客户端钥去打管理端点", 报 401 却指向钥匙本身。
+ */
+export const OPENAPI_FACE_PATH = '/api/v1/openapi'
+
+/**
+ * 登录面 —— 不归本平台。这里**只列一个前缀**, 且它是唯一一处前端会主动把用户
+ * 密码发出去的地方, 所以它值得一条自己的规则, 而不是混在 studio 里。
+ */
+export const AUTH_FACE_PATH = '/api/auth'
+
+/**
+ * 换凭据的那几个端点 —— 只有它们必须**空手**去打。
+ *
+ * 写成一张显式的名单而不是"整个 /api/auth 前缀都不带凭据": 后者的规则比它的理由
+ * (见 request() 里那段)宽得多, 而宽出来的部分会把 `/api/auth/me` 一起吃掉 ——
+ * 那个端点恰恰是**靠票**才能回答的。
+ */
+const CREDENTIAL_EXCHANGE_PATHS: readonly string[] = ['/api/auth/login']
+
+/** 这个路径是不是"去换凭据的那一次"。query/fragment 不影响归属。 */
+export function isCredentialExchange(url: string): boolean {
+  return CREDENTIAL_EXCHANGE_PATHS.includes(stripQueryAndFragment(url))
+}
+
+export type Face = 'admin' | 'client' | 'studio' | 'auth'
 
 export interface Credentials {
   /** 管理密钥(X-Admin-Key)。空 = 管理面不可用, 但客户端面照常。 */
   adminKey: string
   /** 客户端 API Key(sap_...)。空 = 客户端面不可用。 */
   clientKey: string
+  /**
+   * Studio 面的用户票(JWT)。空 = Studio 各页显示"请先登录", 而 API 面照常 ——
+   * 两张面互不依赖, 这一点是有意的: 一个只想发 API Key 的运维不该被迫先登录。
+   */
+  studioToken: string
 }
 
-export const EMPTY_CREDENTIALS: Credentials = { adminKey: '', clientKey: '' }
+export const EMPTY_CREDENTIALS: Credentials = { adminKey: '', clientKey: '', studioToken: '' }
 
 /**
  * 判定一个请求属于哪个面。
@@ -42,12 +86,38 @@ export const EMPTY_CREDENTIALS: Credentials = { adminKey: '', clientKey: '' }
  *
  * 前缀比较用 `===` 或 `prefix + '/'`, 不能用裸 startsWith —— 否则
  * `/api/v1/openapi/clients-archive` 会被误判成管理面, 而它其实是客户端面的资源。
+ *
+ * <h2>判定顺序是这个函数唯一的难点</h2>
+ *
+ * 管理面在开放面**之内**(`/api/v1/openapi/clients` 是 `/api/v1/openapi` 的子路径),
+ * 所以管理面必须先判 —— 反过来写的话, 管理端点会被开放面吃掉, 拿着 sap_ 钥匙去打
+ * 管理端点, 服务端回 401, 而 401 的文案是"钥匙无效", 用户会去怀疑钥匙本身。
  */
 export function faceOf(url: string): Face {
   const pathOnly = stripQueryAndFragment(url)
+
   if (pathOnly === ADMIN_FACE_PATH || pathOnly.startsWith(ADMIN_FACE_PATH + '/')) {
     return 'admin'
   }
+  // `/api/health` 是探活: 它**不**归 studio —— 一个探活请求不该带任何凭据,
+  // 而给它挂上 Bearer 的后果是把"服务活着吗"变成"我的票过期了吗"。
+  if (pathOnly === '/api/health') {
+    return 'client'
+  }
+  if (pathOnly === AUTH_FACE_PATH || pathOnly.startsWith(AUTH_FACE_PATH + '/')) {
+    return 'auth'
+  }
+  if (pathOnly === OPENAPI_FACE_PATH || pathOnly.startsWith(OPENAPI_FACE_PATH + '/')) {
+    return 'client'
+  }
+  // 其余 `/api/**` 全部归 studio。写成前缀匹配而不是逐个列举, 是因为 8091 上有
+  // 73 个端点、且它们分散在十几个控制器里 —— 列举法会随 8091 长出新端点而静默失效,
+  // 而失效的样子是"新页面全部 401"。
+  if (pathOnly === '/api' || pathOnly.startsWith('/api/')) {
+    return 'studio'
+  }
+  // 文档(/docs、/v3/api-docs)既不要钥匙也不归 studio: 它们由 springdoc 提供,
+  // 而 springdoc 在 8092 上。
   return 'client'
 }
 
@@ -83,6 +153,7 @@ export function initCredentials(): Credentials {
       credentials = {
         adminKey: typeof parsed.adminKey === 'string' ? parsed.adminKey : '',
         clientKey: typeof parsed.clientKey === 'string' ? parsed.clientKey : '',
+        studioToken: typeof parsed.studioToken === 'string' ? parsed.studioToken : '',
       }
     }
   } catch {
@@ -96,8 +167,13 @@ export function initCredentials(): Credentials {
 export function setCredentials(next: Credentials): void {
   credentials = next
   try {
-    if (!next.adminKey && !next.clientKey) sessionStorage.removeItem(STORAGE_KEY)
-    else sessionStorage.setItem(STORAGE_KEY, JSON.stringify(next))
+    // 三把全空 = 没什么可留的。少判一把的后果是"登出之后 sessionStorage 里还留着
+    // 上一张票", 而那正是登出想清掉的东西。
+    if (!next.adminKey && !next.clientKey && !next.studioToken) {
+      sessionStorage.removeItem(STORAGE_KEY)
+    } else {
+      sessionStorage.setItem(STORAGE_KEY, JSON.stringify(next))
+    }
   } catch {
     /* 存不下就算了 —— 本次会话内存里仍然有效 */
   }
@@ -119,13 +195,28 @@ export class ApiError extends Error {
   }
 }
 
-/** 服务端在错误体里放的是 `{error: "..."}`, 取不到就退回状态码文案。 */
-async function errorMessage(res: Response): Promise<string> {
+/**
+ * 服务端在错误体里放的是 `{error: "..."}`, 取不到就退回状态码文案。
+ *
+ * <h2>403 在这一层有两种意思, 而它们要分开说</h2>
+ *
+ * 两个后端的未认证语义**不一样**, 这不是笔误: 8092 的 OpenApiAuthFilter 回 401,
+ * 而 8091 的 ServerSecurityConfig 没配 authenticationEntryPoint, 于是拿不到身份时
+ * 走 Spring 默认的 Http403ForbiddenEntryPoint —— **回 403**。
+ *
+ * 所以"403"在 studio 面上等于"没登录/票过期了", 而不是"你没这个权限"(8091 上根本
+ * 没有角色体系, 每个登录用户都是 ROLE_USER)。照抄 401 的文案会把人引向"去查权限",
+ * 而正确答案是"重新登录"。
+ */
+async function errorMessage(res: Response, face: Face): Promise<string> {
   try {
     const body = await res.json()
     if (body && typeof body.error === 'string' && body.error) return body.error
   } catch {
     /* 非 JSON 错误体(网关页/空体) —— 走下面的兜底 */
+  }
+  if (face === 'studio' && (res.status === 401 || res.status === 403)) {
+    return '登录已失效 —— 重新登录即可(聊天平台的账号)'
   }
   if (res.status === 401) return '钥匙无效或缺失'
   if (res.status === 404) return '不存在或不属于当前客户端'
@@ -138,20 +229,40 @@ async function request<T>(url: string, init: RequestInit = {}): Promise<T> {
   const headers = new Headers(init.headers)
   headers.set('Accept', 'application/json')
 
-  const credential = face === 'admin' ? credentials.adminKey : credentials.clientKey
-
-  if (face === 'admin') {
+  if (face === 'auth') {
+    /*
+     * 登录面里其实有**两种**请求, 而它们对凭据的要求是相反的 —— 这是这一面唯一的坑。
+     *
+     *   /api/auth/login  去换票的那一次, 必须空手: 带着一张过期/错误的票去打它,
+     *                    服务端的 JwtAuthenticationFilter 会先看到那张票, 于是
+     *                    "密码是对的却登不进去", 而屏幕上没有任何东西提示问题出在旧票上。
+     *   /api/auth/me     问"这张票是谁的", 必须带票 —— 空手去一定是 403, 因为它
+     *                    要回答的正是"票的主人是谁"。
+     *
+     * 早先这里一刀切成"登录面一律不带凭据", 于是 whoami() 永远 403, 而 hydrate()
+     * 把 403 读成"票失效了"并清掉了票 —— 症状是**每次刷新都退回登录页**, 看起来
+     * 像是登录本身没成功, 而不是这一条判定写宽了。
+     */
+    if (!isCredentialExchange(url) && credentials.studioToken) {
+      headers.set('Authorization', `Bearer ${credentials.studioToken}`)
+    }
+  } else if (face === 'admin') {
     // 管理面: 带空 X-Admin-Key 没有意义 —— 服务端 adminKey 未配时回 503,
     // 配了但值不对回 401, 两种都让用户看不懂。这里提前拦下, 说清是哪一把缺了。
-    if (!credential) {
+    if (!credentials.adminKey) {
       throw new ApiError(0, '未配置管理密钥 —— 先在「接入」页填入 X-Admin-Key')
     }
-    headers.set('X-Admin-Key', credential)
+    headers.set('X-Admin-Key', credentials.adminKey)
+  } else if (face === 'studio') {
+    if (!credentials.studioToken) {
+      throw new ApiError(0, '尚未登录 —— Studio 各页需要聊天平台的账号')
+    }
+    headers.set('Authorization', `Bearer ${credentials.studioToken}`)
   } else {
-    if (!credential) {
+    if (!credentials.clientKey) {
       throw new ApiError(0, '未配置客户端 API Key —— 先在「接入」页填入 sap_... 钥匙')
     }
-    headers.set('Authorization', `Bearer ${credential}`)
+    headers.set('Authorization', `Bearer ${credentials.clientKey}`)
   }
 
   if (init.body !== undefined && !headers.has('Content-Type')) {
@@ -161,7 +272,7 @@ async function request<T>(url: string, init: RequestInit = {}): Promise<T> {
   const res = await fetch(url, { ...init, headers })
 
   if (!res.ok) {
-    throw new ApiError(res.status, await errorMessage(res))
+    throw new ApiError(res.status, await errorMessage(res, face))
   }
   // 204(吊销 / 软删成功)没有响应体 —— res.json() 会抛, 这里显式短路。
   if (res.status === 204) {
@@ -275,4 +386,231 @@ export function deleteAgent(agentId: string): Promise<void> {
 
 export function getAgentState(agentId: string): Promise<AgentState> {
   return request<AgentState>(`/api/v1/openapi/agents/${encodeURIComponent(agentId)}/state`)
+}
+
+// ── Studio 面(JWT) ──────────────────────────────────────────────────────────
+//
+// 这一半打的是 server:8091, 走用户 JWT。它读的是**同一个人**在聊天平台上拥有的
+// agent —— 与上面那一半(按 API client 归属)是两套完全不同的可见性规则, 所以这里
+// 的每个函数路径都刻意不叫 openapi: 两个面混起来的后果是"用客户端钥去读别人的
+// agent", 而那正是两套规则存在的理由。
+
+export interface LoginResult {
+  token: string
+  user?: { id?: string; nickname?: string; username?: string }
+}
+
+/**
+ * 换一张票 —— 把用户凭据交给**聊天平台**(`users` 表的拥有者), 拿回 JWT。
+ *
+ * 字段名是 `username` 而不是 `email`: 聊天平台的 LoginRequest 按 username 取,
+ * 而它接受邮箱作为用户名(测试账号就是这么登的)。写成 `email` 会得到一个
+ * 「Cannot invoke String.trim() because getUsername() is null」的 500 ——
+ * 一个把"字段名写错"报成"服务端空指针"的错误, 归因成本极高。
+ */
+export function login(username: string, password: string): Promise<LoginResult> {
+  return request<LoginResult>('/api/auth/login', {
+    method: 'POST',
+    body: JSON.stringify({ username, password }),
+  })
+}
+
+/** 当前这张票是谁的 —— 登录后确认用, 也让"票还在不在"有一个便宜的探针。 */
+export function whoami(): Promise<{ id?: string; nickname?: string; username?: string }> {
+  return request('/api/auth/me')
+}
+
+export interface Companion {
+  id: string
+  name: string
+  /** 账号ID(`agent_` 前缀)。它与 `id` 是**两个不同的东西** —— 见 §身份。 */
+  handle?: string
+  gender?: string
+  age?: number
+  relationshipType?: string
+  relationshipStage?: string
+  greeting?: string
+  createdAt?: string
+  persona?: Record<string, unknown> | null
+}
+
+export function listCompanions(): Promise<Companion[]> {
+  return request<Companion[]>('/api/companions')
+}
+
+export function getCompanion(id: string): Promise<Companion> {
+  return request<Companion>(`/api/companions/${encodeURIComponent(id)}`)
+}
+
+export function listPersonaVersions(id: string): Promise<PersonaVersion[]> {
+  return request<PersonaVersion[]>(
+    `/api/companions/${encodeURIComponent(id)}/persona/versions`,
+  )
+}
+
+export interface PersonaVersion {
+  id?: string
+  versionId?: string
+  reason?: string
+  createdAt?: string
+  persona?: Record<string, unknown>
+}
+
+export function getAgentStateFull(id: string): Promise<Record<string, unknown>> {
+  return request<Record<string, unknown>>(`/api/companions/${encodeURIComponent(id)}/state`)
+}
+
+export function listMemories(id: string, type?: string): Promise<MemoryRow[]> {
+  const q = type ? `?type=${encodeURIComponent(type)}` : ''
+  return request<MemoryRow[]>(`/api/companions/${encodeURIComponent(id)}/memories${q}`)
+}
+
+export function searchMemories(id: string, query: string): Promise<MemoryRow[]> {
+  return request<MemoryRow[]>(
+    `/api/companions/${encodeURIComponent(id)}/memories/search?q=${encodeURIComponent(query)}`,
+  )
+}
+
+export interface MemoryRow {
+  id?: string
+  memoryId?: string
+  type?: string
+  content?: string
+  importance?: number
+  createdAt?: string
+  lastAccessedAt?: string
+  [k: string]: unknown
+}
+
+export function getRelationship(id: string): Promise<Record<string, unknown>> {
+  return request<Record<string, unknown>>(`/api/companions/${encodeURIComponent(id)}/relationship`)
+}
+
+export function listRelationshipEvents(id: string): Promise<Record<string, unknown>[]> {
+  return request<Record<string, unknown>[]>(
+    `/api/companions/${encodeURIComponent(id)}/relationship/events`,
+  )
+}
+
+export function listSharedExperiences(id: string): Promise<Record<string, unknown>[]> {
+  return request<Record<string, unknown>[]>(
+    `/api/companions/${encodeURIComponent(id)}/relationship/shared-experiences`,
+  )
+}
+
+export function getRelationshipNarrative(id: string): Promise<Record<string, unknown>> {
+  return request<Record<string, unknown>>(
+    `/api/companions/${encodeURIComponent(id)}/relationship/narrative`,
+  )
+}
+
+export function listPromises(id: string): Promise<Record<string, unknown>[]> {
+  return request<Record<string, unknown>[]>(
+    `/api/companions/${encodeURIComponent(id)}/relationship/promises`,
+  )
+}
+
+export function getLife(id: string): Promise<Record<string, unknown>> {
+  return request<Record<string, unknown>>(`/api/companions/${encodeURIComponent(id)}/life`)
+}
+
+export function listLifeEvents(id: string): Promise<Record<string, unknown>[]> {
+  return request<Record<string, unknown>[]>(
+    `/api/companions/${encodeURIComponent(id)}/life-events`,
+  )
+}
+
+export function listWorldEvents(id: string): Promise<Record<string, unknown>[]> {
+  return request<Record<string, unknown>[]>(
+    `/api/companions/${encodeURIComponent(id)}/v5/world-events`,
+  )
+}
+
+export function listOpenLoops(id: string): Promise<Record<string, unknown>[]> {
+  return request<Record<string, unknown>[]>(
+    `/api/companions/${encodeURIComponent(id)}/open-loops`,
+  )
+}
+
+export function getMetrics(id: string): Promise<Record<string, unknown>> {
+  return request<Record<string, unknown>>(
+    `/api/companions/${encodeURIComponent(id)}/v9/metrics`,
+  )
+}
+
+export function listTraces(id: string): Promise<Record<string, unknown>[]> {
+  return request<Record<string, unknown>[]>(`/api/companions/${encodeURIComponent(id)}/v5/traces`)
+}
+
+export function listReflections(id: string): Promise<Record<string, unknown>[]> {
+  return request<Record<string, unknown>[]>(
+    `/api/companions/${encodeURIComponent(id)}/reflections`,
+  )
+}
+
+export function listExperiences(id: string): Promise<Record<string, unknown>[]> {
+  return request<Record<string, unknown>[]>(
+    `/api/companions/${encodeURIComponent(id)}/experiences`,
+  )
+}
+
+export function getSelfModel(id: string): Promise<Record<string, unknown>> {
+  return request<Record<string, unknown>>(`/api/companions/${encodeURIComponent(id)}/self`)
+}
+
+/** 我自己的账号ID 与改号配额 —— 它属于**人**, 不属于 agent, 所以没有 companionId。 */
+export interface HandleView {
+  handle: string
+  used: number
+  limit: number
+  remaining: number
+  nextChangeAt?: string | null
+}
+
+export function getMyHandle(): Promise<HandleView> {
+  return request<HandleView>('/api/persons/me/handle')
+}
+
+/** 一个动作 —— 应用能做的**一件具体的事**。`agentHint` 是应用作者写给 agent 的策略建议。 */
+export interface LapAction {
+  actionId?: string
+  applicationId?: string
+  capabilityId?: string
+  description?: string
+  permissionLevel?: string
+  riskLevel?: string
+  agentHint?: string
+  inputSchema?: unknown
+  [k: string]: unknown
+}
+
+export interface LapApplication {
+  applicationId?: string
+  version?: string
+  name?: string
+  description?: string
+  category?: string
+  capabilities?: string[]
+  actions?: LapAction[]
+  [k: string]: unknown
+}
+
+export interface LapCapability {
+  capabilityId?: string
+  title?: string
+  description?: string
+  category?: string
+  applications?: LapApplication[]
+  [k: string]: unknown
+}
+
+/**
+ * 应用平台目录 —— 能力 → 应用 → 动作, 一次取全。
+ *
+ * 它是一条**新的读取出口**(server:8091 的 `LapCatalogController`): 认知链一直在
+ * 用这三个只读方法问聊天平台"有什么能做的", 但从来没有控制器把它们暴露出来过。
+ * 数据一直存在, 缺的只是这个出口。
+ */
+export function getLapCatalog(): Promise<LapCapability[]> {
+  return request<LapCapability[]>('/api/lap/catalog')
 }
