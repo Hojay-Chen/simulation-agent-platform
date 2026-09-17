@@ -81,6 +81,25 @@ public class SessionSummaryService {
         }
     }
 
+    /**
+     * 会话已经不存在了 —— 丢掉它们的摘要。
+     *
+     * <p>由 {@code AgentRetirementService#purgeChatWorld} 在 chat 平台确认销毁之后调用, 传进来的
+     * id 就是 chat 还回来的那一份。**顺序不能反**: 先删本地摘要再去删会话, 一旦 chat 那边
+     * 失败, 留下的是"摘要还在、会话还在"（无害）; 反过来则是"会话没了、摘要还在", 而摘要
+     * 是 {@code maybeSummarize} 的唯一锚点 —— 将来同一个 conversationId 被复用时会直接
+     * 读到别人的摘要。
+     *
+     * <p>幂等: id 清单里的东西早被删过也不报错。
+     */
+    @Transactional
+    public long deleteForConversations(java.util.Collection<String> conversationIds) {
+        if (conversationIds == null || conversationIds.isEmpty()) return 0;
+        long n = repo.deleteByConversationIdIn(conversationIds);
+        log.info("[SessionSummary] 丢弃 {} 个已销毁会话的摘要", n);
+        return n;
+    }
+
     private void applyParts(SessionSummary s, SummaryParts parts) {
         s.setFactsText(parts.facts());
         s.setUnresolvedText(parts.unresolved());

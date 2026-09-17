@@ -126,6 +126,36 @@ public abstract class HttpClientSupport {
         }
     }
 
+    /**
+     * 写路径：DELETE，返回响应体里的列表（{@code ChatWorldPort#purgePeer} 用）。
+     *
+     * <p>与 {@link #post} 同属"写"那一档 —— 失败抛 {@link IllegalStateException}。这里
+     * <b>刻意不学 {@code post} 对 404 的宽容</b>：{@code post} 把 404 当 {@code null}
+     * 是为了容忍"对面那个版本还没有这条路由"的部署时差，而删除没有"宽容"这个选项 ——
+     * 假装删掉了、实际没删，正是幽灵会话窗口的成因。宁可报错让人看见。
+     *
+     * <p>DELETE 无请求体，签名按空串算（与 {@link #open} 一致）。
+     */
+    protected <T> java.util.List<T> deleteList(String path,
+                                               com.fasterxml.jackson.databind.JavaType listType) {
+        HttpURLConnection conn = null;
+        try {
+            conn = open(path, "DELETE", null);
+            int code = conn.getResponseCode();
+            if (code >= 400) {
+                throw new IllegalStateException("chat 平台 " + code + ": " + readError(conn));
+            }
+            try (InputStream in = conn.getInputStream()) {
+                return objectMapper.readValue(in, listType);
+            }
+        } catch (IOException e) {
+            throw new IllegalStateException("chat 平台调用失败(" + path + "): "
+                    + e.getClass().getSimpleName(), e);
+        } finally {
+            if (conn != null) conn.disconnect();
+        }
+    }
+
     /** fire-and-forget 写：任何失败都吞掉只 log（onUserMessage/markRead/deliveryStatus 等）。
      * DH 平台缺席时聊天平台照常运转, outbox 兜底链路仍在。 */
     protected void postFireAndForget(String path, Object body) {

@@ -27,6 +27,8 @@ import java.util.Optional;
  *     头直传）。</li>
  *   <li><b>fire-and-forget</b>(markRead/deliveryStatus/updatePerception/publishEvent/…):
  *     任何失败都吞掉只 log —— chat 缺席时认知链照常跑，世界状态由 outbox/重试补。</li>
+ *   <li><b>销毁</b>(purgePeer): 同"写/变更"一档, 失败抛错。删除没有"宽容"这个选项 ——
+ *     假装删掉了、实际没删, 正是幽灵会话窗口的成因。见 {@link #purgePeer}。</li>
  * </ul>
  *
  * <p>构造函数签名含全部依赖，便于将来由 @Configuration 装配而不必硬编码配置键名。
@@ -168,6 +170,22 @@ public class HttpChatWorldAdapter extends HttpClientSupport implements ChatWorld
         postFireAndForget("/internal/world/threads/touch",
                 Map.of("companionId", companionId, "conversationId", conversationId,
                         "topic", nullToEmpty(topic), "emotion", nullToEmpty(emotion)));
+    }
+
+    // ── 生命周期 ────────────────────────────────────────────────────────────
+
+    /**
+     * 见 {@code ChatWorldPort#purgePeer}。
+     *
+     * <p>归在"写"这一档(失败抛错), 不是 fire-and-forget —— 吞掉失败 = 用户以为删干净了、
+     * 聊天列表里那个窗口还在, 这正是要修的那个 bug。调用方拿到异常后该把这次删除标成
+     * "未完成", 而不是当成成功。
+     *
+     * <p>返回的 conversationId 清单是调用方删自己 {@code session_summaries} 的唯一依据。
+     */
+    @Override
+    public List<String> purgePeer(String companionId) {
+        return deleteList("/internal/world/peers/" + companionId, listOf(String.class));
     }
 
     // ── 内部 ─────────────────────────────────────────────────────────────────

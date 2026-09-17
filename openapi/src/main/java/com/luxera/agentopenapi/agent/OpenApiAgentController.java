@@ -118,12 +118,25 @@ public class OpenApiAgentController {
         }
     }
 
+    /**
+     * 软删 agent —— 只写 {@code deleted_at}。
+     *
+     * <p>方法论上这里**做不到**更彻底: 完整退役要清 {@code phone} 包与
+     * {@code runtime.pipeline} 包的活队列、还要经 {@code ChatWorldPort} 销毁聊天平台的会话,
+     * 而这三样在本进程里一律不存在 —— 本服务的扫描白名单刻意只有 persona 闭包的薄件
+     * (见 {@code AgentOpenApiApplication} 的注释与 {@code check-agent.sh} 的边界守卫),
+     * 完整退役因此住在 server 侧、openapi 扫不到的 {@code AgentRetirementService} 里。
+     *
+     * <p>所以本接口的语义就是它文档里写的那一个 —— 软删。第三方删掉的 agent 留下的聊天
+     * 残骸由 {@code GhostChatSweeper} 兜底(它按 {@code deleted_at is not null} 全表对账,
+     * 不区分是谁删的)。
+     */
     @Operation(summary = "软删 agent(deleted_at — 与平台真人侧同语义)")
     @DeleteMapping("/{agentId}")
     public ResponseEntity<Void> delete(HttpServletRequest request, @PathVariable String agentId) {
         OpenApiClientRecord client = caller(request);
         try {
-            companionService.delete(client.getId(), agentId);
+            companionService.softDelete(client.getId(), agentId);
             return ResponseEntity.noContent().build();
         } catch (RuntimeException e) {
             return ResponseEntity.notFound().build();

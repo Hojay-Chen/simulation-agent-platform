@@ -117,8 +117,42 @@ public class CompanionService {
         return companions.findByUserIdAndDeletedAtIsNullOrderByCreatedAtAsc(userId);
     }
 
+    /**
+     * 「这个 Agent 是不是我的, 而且已经删了」—— 给删除接口的**重试**用。
+     *
+     * <p>{@link #requireOwned} 把"不存在"、"不是我的"、"已删除"三种情况统一报成 404, 这对
+     * 正常的读取路径是对的(不泄露"存在但不是你的")。但删除路径需要把第三种单独认出来:
+     * 上次删到一半(本仓删成了、聊天平台没清干净), 用户再点一次删除时, 我们要能接着做收尾,
+     * 而不是回他一个 404 把他卡死在半个状态上。
+     *
+     * <p>归属照样查 —— 这个判断不能变成"谁都能触发销毁"。
+     */
+    @Transactional(readOnly = true)
+    public boolean ownsDeleted(String userId, String companionId) {
+        return companions.findById(companionId)
+                .map(c -> c.getUserId().equals(userId) && c.getDeletedAt() != null)
+                .orElse(false);
+    }
+
+    /**
+     * 软删除 —— 只把 {@code deleted_at} 写上, <b>本仓其他表和聊天平台一概不动</b>。
+     *
+     * <p>名字里的 soft 是认真的: 它**不是**"删除这个 Agent"的完整含义。完整的退役是
+     * {@code AgentRetirementService#retire}, 那里才会清活队列、才会把聊天平台的会话连消息
+     * 一起销毁。
+     *
+     * <p>这个方法之所以单独留着、而且必须保持这么薄, 是因为 8092(openapi)也调它 ——
+     * 那个进程的扫描白名单刻意只有 persona 闭包的薄件, 连 {@code phone} 包的仓储都不注册
+     * (见 {@code AgentOpenApiApplication} 的注释与 {@code check-agent.sh} 的边界守卫)。
+     * 任何往这里加的依赖都会把认知链拖进 8092, 或者直接把 8092 启动搞崩。第三方 API 的
+     * 语义本来就是"软删"(见 {@code OpenApiAgentController} 的接口说明), 所以那边到此为止
+     * 是对的; 漏下的残骸由 {@code GhostChatSweeper} 兜底。
+     *
+     * <p>界线的另一半: {@link #ownsDeleted} + {@code AgentRetirementService} 才是平台
+     * 真人侧的删除入口。
+     */
     @Transactional
-    public void delete(String userId, String companionId) {
+    public void softDelete(String userId, String companionId) {
         Companion c = requireOwned(userId, companionId);
         c.setDeletedAt(LocalDateTime.now());
         companions.save(c);
