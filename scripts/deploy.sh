@@ -64,6 +64,27 @@ NGINX_BIN="$(command -v nginx || true)"
 [ -n "$NGINX_BIN" ] && ok "nginx 在 ($NGINX_BIN)" || die "没有 nginx"
 [ -d "$ROOT/frontend" ] && ok "frontend 目录在" || die "缺 frontend/"
 [ -d "$ROOT/frontend/node_modules" ] && ok "前端依赖已装" || die "缺 frontend/node_modules —— 先 cd frontend && npm ci"
+
+# npm 必须解析成绝对路径, 且要把它的目录塞进子进程的 PATH 才能调起来。
+#
+# 本机 node 是 nvm 装的(`~/.nvm/versions/node/*/bin/`), 而 nvm 只在**交互式** shell
+# 的 .bashrc 里注入 PATH。于是 `sudo -H -u ubuntu -- npm` 与
+# `sudo -H -u ubuntu -- bash -lc npm` **都**找不到它 —— 两种都实测过, 这与 nginx
+# 那一处的假阴性是同一类问题(部署脚本跑在非登录 shell 里)。
+# 症状还特别有误导性: 部署停在"前端构建失败", 而前端一行代码都没错。
+#
+# 光有绝对路径还不够: npm 是个 `#!/usr/bin/env node` 的脚本, 所以**子进程还得能
+# 找到 node**。用 `env PATH=...` 显式前置 nvm 的 bin 目录, 比依赖 sudoers 的
+# secure_path 更可靠(secure_path 会把 PATH 重置掉)。
+BUILD_HOME="$(getent passwd "$BUILD_USER" | cut -d: -f6)"
+NPM="$(command -v npm || true)"
+if [ -z "$NPM" ]; then
+  # sort -V 而不是字典序 —— 否则 v9 会排在 v24 后面
+  NPM="$(ls -1 "$BUILD_HOME"/.nvm/versions/node/*/bin/npm 2>/dev/null | sort -V | tail -1 || true)"
+fi
+[ -n "$NPM" ] && [ -x "$NPM" ] && ok "npm 在 ($NPM)" \
+  || die "找不到 npm —— 装 node, 或把 npm 放进 PATH (D2 要构建前端)"
+NPM_DIR="$(dirname "$NPM")"
 # 后端没起时部署前端是合法的(静态页照发), 但健康检查会红 —— 先说清楚
 if curl -s -m 2 -o /dev/null "http://127.0.0.1:8092/api/health"; then
   ok "openapi:8092 在跑"
@@ -78,7 +99,8 @@ if [ "$SKIP_BUILD" = "1" ]; then
 elif [ "$DRY_RUN" = "1" ]; then
   echo "    [dry-run] (cd frontend && npm run build)"
 else
-  ( cd "$ROOT/frontend" && as_build_user npm run build ) && ok "构建完成 (以 $BUILD_USER)" || die "前端构建失败"
+  ( cd "$ROOT/frontend" && as_build_user env "PATH=$NPM_DIR:$PATH" "$NPM" run build ) \
+    && ok "构建完成 (以 $BUILD_USER)" || die "前端构建失败"
 fi
 DIST="$ROOT/frontend/dist"
 [ "$DRY_RUN" = "1" ] || [ -f "$DIST/index.html" ] || die "缺 $DIST/index.html —— 构建没产出"
