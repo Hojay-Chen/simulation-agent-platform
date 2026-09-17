@@ -42,6 +42,24 @@ public class InternalCompanionDirectoryController {
     /**
      * chat 落用户消息前的归属校验。404 = 伴侣不存在或不属于这个用户 —— chat 侧据此
      * 拒掉这次写入（不会放行"陌生人的伴侣"）。
+     *
+     * <h2>{@code peerMemberId} 现在给的是聊天账号 id, 不再是 companion id</h2>
+     *
+     * 它的语义从第一天起就是"这个 Agent 在聊天平台上的**不透明参与者 id**"
+     * ({@code CompanionDirectoryPort.CompanionRef#peerMemberId} 的 Javadoc 逐字承诺了这次切换:
+     * "today the companion id, under a provisioned simulator account once pairing is universal")。
+     * 现在账号铸好了, 于是承诺兑现 —— 有 {@code chat_account_id} 就给它, 没有才退回
+     * companion id。
+     *
+     * <p><b>回退那一支不是过渡期的将就。</b> 一个还没有聊天账号的 Agent 至今是正常状态
+     * (账号是这一期才补铸的), 而如果这里对它返回一个空值或抛错, 那个 Agent 的每一条消息都
+     * 会写不进去。回退值 {@code companionId} 又正好等于切换之前的行为, 所以"半迁移"状态下
+     * 系统是逐字可用的。
+     *
+     * <p>为什么是这一侧决定而不是让 chat 侧自己查设备表: 因为**这一侧才知道该用哪个账号**
+     * —— {@code chat_account_id} 是本表的一列。让对面去查它的设备表, 等于让两份记录各自
+     * 回答同一个问题, 而它们会漂移。真实的分工是: 账号由 chat 铸(它是 chat 的 users 行),
+     * 铸完**告诉**本仓, 本仓记下来, 此后"这个 agent 用哪个账号"由本仓回答。
      */
     @PostMapping("/require-owned")
     public ResponseEntity<Map<String, String>> requireOwned(@RequestBody RequireOwnedBody body) {
@@ -55,8 +73,14 @@ public class InternalCompanionDirectoryController {
         }
         return ResponseEntity.ok(Map.of(
                 "companionId", c.getId(),
-                "name", c.getName(),
-                "peerMemberId", c.getId()));
+                "name", c.getName() == null ? "" : c.getName(),
+                "peerMemberId", peerMemberIdOf(c)));
+    }
+
+    /** 有聊天账号就用它, 没有就退回 companion id —— 见 {@link #requireOwned} 的说明。 */
+    private static String peerMemberIdOf(Companion c) {
+        String accountId = c.getChatAccountId();
+        return accountId != null && !accountId.isBlank() ? accountId : c.getId();
     }
 
     /**

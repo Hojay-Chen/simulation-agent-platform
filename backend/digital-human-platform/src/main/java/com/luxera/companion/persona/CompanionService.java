@@ -176,6 +176,94 @@ public class CompanionService {
     }
 
     /**
+     * 全部活着的 Agent —— 对账 runner 的输入。
+     *
+     * <p>与 {@link #list(String)} 的区别是判据: 那一个按 {@code user_id}(谁的好友),
+     * 这一个不按任何人 —— 补铸和对账是**平台级**的活, 它们要问的是"这个平台上现在有哪些
+     * Agent", 而不是"某个人有哪些 Agent"。
+     *
+     * <p>已删除的不在里面: 一个用户删掉的 Agent 不该被补一个聊天账号, 它该做的是让
+     * 聊天平台那边把残留清干净(那是 {@code AgentRetirementService} 与
+     * {@code GhostChatSweeper} 的活)。
+     */
+    @Transactional(readOnly = true)
+    public List<Companion> listLive() {
+        return companions.findByDeletedAtIsNullOrderByCreatedAtAsc();
+    }
+
+    /**
+     * 还没有聊天账号的活 Agent —— 补铸 runner 的输入, 见
+     * {@code CompanionRepository#findByDeletedAtIsNullAndChatAccountIdIsNullOrderByCreatedAtAsc}。
+     */
+    @Transactional(readOnly = true)
+    public List<Companion> listMissingChatAccount() {
+        return companions.findByDeletedAtIsNullAndChatAccountIdIsNullOrderByCreatedAtAsc();
+    }
+
+    /**
+     * 把一个**已经存在的**聊天账号登记给一个**已经存在的** agent —— 补铸走的那条路。
+     *
+     * <h2>它不是 {@link #create} 的一个分支, 因为顺序恰好相反</h2>
+     *
+     * {@code create} 是"先有 agent, 后有账号"(第三方自助创建时根本没有账号)。
+     * 这里是"先有账号, 后有 agent"的**补录**: 聊天平台为一批早就存在的 agent 铸了账号,
+     * 现在回来把对应关系记上。它不碰人格、不碰关系、不碰任何其他列 —— 只写一列。
+     *
+     * <h2>三道闸, 每一道都在挡一种"两份记录对不上"</h2>
+     *
+     * <ol>
+     *   <li><b>agent 必须存在且活着</b> —— 已删除的不补。给一个用户已经删掉的 agent 补账号,
+     *       等于让它在聊天平台上重新有身份; 而 {@code simulate_devices} 那边也会跟着复活。</li>
+     *   <li><b>已经是同一个值 → 原样返回</b>。补铸 runner 是可重跑的, 第二次跑必然撞上
+     *       这一条 —— 它必须成功, 而不是 409。幂等在这里不是礼貌, 是"重跑安全"的全部内容。</li>
+     *   <li><b>已经是**别的**值 → 抛错</b>。一个 agent 只通过一个聊天账号说话, 这不是
+     *       "后写的赢"那种可以覆盖的字段: 改掉它, 那个 agent 之前发出去的消息就归到了
+     *       另一个身份名下, 而那些消息已经在库里了。换账号只能换一个 agent。</li>
+     * </ol>
+     *
+     * <p>第四种情况 —— 这个聊天账号已经挂在**另一个** agent 上 —— 由
+     * {@code companions.chat_account_id} 的唯一约束兜底(它连已删除的行一起管),
+     * 所以这里先查一次是为了给出一句说得清的话, 而不是为了让数据库不报错。
+     *
+     * @throws javax.persistence.EntityNotFoundException agent 不存在或已删除
+     * @throws BusinessException 409 —— 这个 agent 已经有别的账号, 或这个账号已经归了别人
+     */
+    @Transactional
+    public Companion attachChatAccount(String companionId, String chatAccountId) {
+        if (chatAccountId == null || chatAccountId.isBlank()) {
+            throw new BusinessException(org.springframework.http.HttpStatus.BAD_REQUEST,
+                    "chatAccountId 不能为空", null);
+        }
+        Companion c = companions.findById(companionId)
+                .orElseThrow(() -> new javax.persistence.EntityNotFoundException("伴侣不存在"));
+        if (c.getDeletedAt() != null) {
+            // 与 requireOwned 同样报 404: 在 HTTP 边界上不区分"不存在"与"已删除"
+            throw new BusinessException(org.springframework.http.HttpStatus.NOT_FOUND,
+                    "伴侣不存在", null);
+        }
+
+        if (chatAccountId.equals(c.getChatAccountId())) {
+            return c;   // 重跑命中: 已经是这个值了, 成功
+        }
+        if (c.getChatAccountId() != null) {
+            throw new BusinessException(org.springframework.http.HttpStatus.CONFLICT,
+                    "这个 Agent 已经有聊天账号了",
+                    "一个 Agent 只通过一个聊天账号说话; 换账号要换一个 Agent");
+        }
+
+        java.util.Optional<Companion> taken = companions.findByChatAccountId(chatAccountId);
+        if (taken.isPresent() && !taken.get().getId().equals(companionId)) {
+            throw new BusinessException(org.springframework.http.HttpStatus.CONFLICT,
+                    "这个聊天账号已经登记给别的 Agent 了",
+                    "agent " + taken.get().getId());
+        }
+
+        c.setChatAccountId(chatAccountId);
+        companions.save(c);
+        return c;
+    }
+
+    /**
      * 「这个 Agent 是不是我的, 而且已经删了」—— 给删除接口的**重试**用。
      *
      * <p>{@link #requireOwned} 把"不存在"、"不是我的"、"已删除"三种情况统一报成 404, 这对

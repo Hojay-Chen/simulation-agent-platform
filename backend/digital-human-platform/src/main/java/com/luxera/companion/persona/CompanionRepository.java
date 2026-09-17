@@ -15,6 +15,28 @@ public interface CompanionRepository extends JpaRepository<Companion, String> {
     List<Companion> findByDeletedAtIsNotNull();
 
     /**
+     * 还活着的 Agent —— 给聊天平台的**补铸**与**对账**用。
+     *
+     * <p>不带分页是刻意的: 它的调用方是两个一次性的 runner, 一次要的就是全量; 一个带
+     * 分页的方法会诱使调用方写"翻页直到空"的循环, 而那个循环在补铸场景下正是我们最不想要的
+     * 形状 —— 每翻一页数据就变一次(补铸会改 {@code chat_account_id}, 于是它自己把自己
+     * 的下一页挤走)。
+     *
+     * <p>排序固定成 {@code createdAt}: 补铸是按顺序一件一件来的, 一个不定的顺序会让人
+     * 无法从日志里判断"跑到哪了"。
+     */
+    List<Companion> findByDeletedAtIsNullOrderByCreatedAtAsc();
+
+    /**
+     * 还没有聊天账号的活 Agent —— 补铸 runner 的输入。
+     *
+     * <p>判据是 {@code chatAccountId is null} 而不是"查不到对应的 device": 后者要求本仓
+     * 知道聊天平台的表, 那正是两个平台**不该**有的耦合。这一列是两边唯一约定的落点
+     * (见 {@code Companion#chatAccountId} 的说明), 补铸是否完成以它为准。
+     */
+    List<Companion> findByDeletedAtIsNullAndChatAccountIdIsNullOrderByCreatedAtAsc();
+
+    /**
      * 按**聊天账号**反查 agent —— 一键创建的幂等键。
      *
      * <p>唯一约束保证最多一行, 所以返回 {@code Optional} 而不是 {@code List}: 调用方要做的
