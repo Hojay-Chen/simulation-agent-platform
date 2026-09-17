@@ -51,6 +51,21 @@ public final class Handles {
     /** 自动分配的长度 */
     private static final int LENGTH = 10;
 
+    /**
+     * Agent 账号ID 的固定前缀 —— "这一串是系统发给 Agent 的号", 不是人自选的。
+     *
+     * <p>为什么需要一个前缀, 而不是继续靠"10 位随机串"本身: 账号ID 有两个来源(系统铸造与人
+     * 自选), 而这两者从前在**形状上完全一样**。后果不只是"看不出区别": Agent 的号是不可改的
+     * (需求: Agent 的聊天账号ID 由系统分配), 人的号是可改的 —— 一个用户看到
+     * {@code k3f9d2m1pq} 时无法知道它属于哪一类, 也就无法知道"我能不能改它"。前缀把这条规则
+     * 变成**一眼可读**的: 带 {@code agent_} 的就是不能动的。
+     *
+     * <p>长度上算得过来: {@code agent_}(6) + {@link #LENGTH}(10) = 16, 离
+     * {@link #MAX_LENGTH}(24) 还有余量; {@link Person#getHandle()} 那列是 varchar(32),
+     * {@code agent_} + 上限 24 = 30 也装得下。
+     */
+    public static final String AGENT_PREFIX = "agent_";
+
     /** 用户自选的长度下限与上限 —— 太短会撞、太长没法念 */
     private static final int MIN_LENGTH = 6;
     private static final int MAX_LENGTH = 24;
@@ -81,7 +96,7 @@ public final class Handles {
      */
     private static final Set<String> RESERVED = Set.of(
             "admin", "administrator", "root", "system", "official", "service", "support", "help",
-            "luxera", "me", "self", "here", "all", "everyone", "null", "undefined", "nan");
+            "luxera", "agent", "me", "self", "here", "all", "everyone", "null", "undefined", "nan");
 
     private Handles() {
     }
@@ -98,11 +113,46 @@ public final class Handles {
     }
 
     /**
-     * 校验并归一化用户自选的账号ID。不合法时抛 400, 消息面向用户、hint 给出可执行的下一步。
+     * 校验并归一化**用户自选**的账号ID。不合法时抛 400, 消息面向用户、hint 给出可执行的下一步。
+     *
+     * <p>与 {@link #validateMinted} 的唯一区别是多一条防冒充规则(不许占用
+     * {@link #AGENT_PREFIX}) —— 因为这一条只对"人自己挑的号"成立, 系统给 Agent 铸号时
+     * 恰恰**必须**能造出带前缀的号。两个入口分开, 而不是给一个方法加布尔参数:
+     * 加参数的话, 调用点写错一个字面量就会静默地把防冒充关掉。
      *
      * @return 归一化后的账号ID(一定是小写)
      */
     public static String validate(String raw) {
+        String h = validateShape(raw);
+        // 防冒充: agent_ 前缀是"系统发的 Agent 号"的标识, 人自选时不许占用。
+        //
+        // 必须是**前缀匹配**, 塞进 RESERVED 是挡不住的 —— RESERVED 只做全等匹配
+        // (admin1 合法), 而 SHAPE 本来就接受 agent_xxx(字母开头、下划线在字符集内)。
+        // 少了这一条, 前缀就从"标识"变成了"伪装工具": 任何人都能注册一个
+        // agent_official 去冒充系统发放的 Agent 号。
+        if (h.startsWith(AGENT_PREFIX)) {
+            throw new BusinessException(org.springframework.http.HttpStatus.BAD_REQUEST,
+                    "「" + AGENT_PREFIX + "」开头的账号ID 是系统分配给 Agent 的，不能自己使用",
+                    "可以试试 " + suggestFrom(h.substring(AGENT_PREFIX.length())));
+        }
+        return h;
+    }
+
+    /**
+     * 校验**系统铸造**的账号ID —— 与 {@link #validate} 同, 但不拦 {@link #AGENT_PREFIX}。
+     *
+     * <p>存在理由是 {@link #generateAgentHandle} 与存量重铸: 它们产出的正是一串带前缀的号,
+     * 拿 {@code validate} 去验会把自己刚造出来的号判成非法。这条路径上的"防冒充"由
+     * **构造**保证(前缀是拼上去的), 不需要也不该由校验器来兜。
+     *
+     * @return 归一化后的账号ID(一定是小写)
+     */
+    public static String validateMinted(String raw) {
+        return validateShape(raw);
+    }
+
+    /** 两个入口共用的形状规则: 非空 / 长度 / 字符集 / 保留字。 */
+    private static String validateShape(String raw) {
         String h = normalize(raw);
         if (h.isEmpty()) {
             throw BusinessException.badRequest("账号ID不能为空");
@@ -126,6 +176,16 @@ public final class Handles {
     }
 
     /**
+     * 这一串是不是系统发的 Agent 账号ID。
+     *
+     * <p>给迁移与校验路径用 —— 它们要回答的正是"这个号是不是已经合新规了"。
+     * 归一化后再比, 于是大小写混写不会漏判。
+     */
+    public static boolean isAgentHandle(String raw) {
+        return normalize(raw).startsWith(AGENT_PREFIX);
+    }
+
+    /**
      * 把用户那句不合法的输入**尽量**擦成合法形状, 用来给一个可直接采用的建议。
      *
      * <p>比"随便回一个随机串"好: 用户想叫 {@code 小满_01}, 建议里应当还看得出这是他想要的
@@ -137,15 +197,27 @@ public final class Handles {
      * 乱码的东西。
      */
     public static String suggestFrom(String raw) {
-        String h = normalize(raw).replaceAll("[^a-z0-9_-]", "_").replaceAll("_+", "_");
+        String h = normalize(raw);
+        // 先把 agent_ 前缀摘掉再擦: 它必然过不了 validate, 留着只会把整个建议推进
+        // 末尾那个随机兜底 —— 而用户在表单里敲 "agent_xiaoman" 时, 他想要的分明是
+        // xiaoman 那部分。摘掉前缀, 建议才仍然是"看得出是他想要的东西"。
+        if (h.startsWith(AGENT_PREFIX)) {
+            h = h.substring(AGENT_PREFIX.length());
+        }
+        h = h.replaceAll("[^a-z0-9_-]", "_").replaceAll("_+", "_");
         h = h.replaceAll("^[^a-z]+", "");
         if (h.length() > MAX_LENGTH) {
             h = h.substring(0, MAX_LENGTH);
         }
-        if (h.length() < MIN_LENGTH || !SHAPE.matcher(h).matches() || RESERVED.contains(h)) {
-            // 擦不出可用的形状(或者擦出来正好是保留字) —— 兜一个随机的, 但**不是**纯随机:
-            // 保留可辨识的前缀
-            return "user_" + randomFrom(new SecureRandom(), 6);
+        if (h.length() < MIN_LENGTH || !SHAPE.matcher(h).matches() || RESERVED.contains(h)
+                || h.startsWith(AGENT_PREFIX)) {
+            // 擦不出可用的形状(或者擦出来正好是保留字 / 撞上了 agent_ 前缀) ——
+            // 兜一个随机的, 但**不是**纯随机: 保留可辨识的前缀。
+            //
+            // 前缀用中性的 "acct_"(账号), 不用 "user_": 本方法**两条路径都会走**
+            // (人自选被拒、Agent 路径被拒), 而 "user_" 会把一个 Agent 的建议号
+            // 说成"用户的号"。契约仍然是"返回一个必然能通过 validate 的字符串"。
+            return "acct_" + randomFrom(new SecureRandom(), 6);
         }
         return h;
     }
@@ -175,6 +247,21 @@ public final class Handles {
     /** 用 {@link SecureRandom} 生成一个尚未使用的形状(唯一性由调用方查库保证)。 */
     public static String generate() {
         return generate(LENGTH, new SecureRandom());
+    }
+
+    /**
+     * 生成一个 Agent 账号ID —— 带 {@link #AGENT_PREFIX}, 其余与 {@link #generate(Random)} 同。
+     *
+     * <p>前缀是拼上去的, **不是**从字母表里随机到 {@code a} 开头碰巧凑出来的: 后者会让
+     * "所有 Agent 号都带前缀"变成一条概率性结论, 而它必须是构造性的。
+     *
+     * <p>结果一定过得了 {@link #validateMinted}(注意**不是** {@link #validate} —— 后者按设计
+     * 就拒前缀): 前缀本身是合法形状, 接上来的部分首字符取自 {@link #LETTERS},
+     * 长度 {@code 6 + 10 = 16} 落在 [{@value #MIN_LENGTH}, {@value #MAX_LENGTH}] 内。
+     * 这条契约由单测钉住。
+     */
+    public static String generateAgentHandle(Random random) {
+        return AGENT_PREFIX + generate(LENGTH, random);
     }
 
     /** 默认长度, 但随机源由调用方给 —— 调用方通常已经持有随机源, 不必再造一个。 */

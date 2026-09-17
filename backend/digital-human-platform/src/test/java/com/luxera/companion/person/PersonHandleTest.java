@@ -83,6 +83,17 @@ class PersonHandleTest {
         return personService.getOrCreateAgent(c);
     }
 
+    /**
+     * 建一个真人并返回它的 Person。
+     *
+     * <p>配额与改号的测试全部走这里, 而不是 {@link #newAgent} —— 因为**只有人能改号**
+     * (Agent 的账号ID 由系统分配)。换句话说这不是"换个夹具", 是这批测试的被测对象
+     * 从"任意 Person"收窄成了"USER Person", 而那正是需求本身。
+     */
+    private Person newUser() {
+        return personService.getOrCreateUser(UUID.randomUUID().toString());
+    }
+
     private void recordChange(String personId, String from, String to, LocalDateTime when) {
         PersonHandleChange r = new PersonHandleChange();
         r.setPersonId(personId);
@@ -99,8 +110,22 @@ class PersonHandleTest {
         Person a = newAgent("小满");
 
         assertNotNull(a.getHandle(), "新建的 Agent 必须立刻有账号ID —— 不能等下次启动补");
-        assertEquals(a.getHandle(), Handles.validate(a.getHandle()),
-                "系统分配的号必须自己过得了校验, 否则用户改回去还会被拒");
+        assertTrue(Handles.isAgentHandle(a.getHandle()),
+                "Agent 的号必须带 agent_ 前缀 —— 那正是「这个号不能改」的一眼可读标识: " + a.getHandle());
+        // 用 validateMinted 而不是 validate: 后者按设计**就拒** agent_ 前缀(防冒充),
+        // 拿它验系统自己铸出来的号, 会把合法产物判成非法。
+        assertEquals(a.getHandle(), Handles.validateMinted(a.getHandle()),
+                "系统分配的号必须自己过得了铸号侧的校验");
+    }
+
+    @Test
+    void newUsersGetAHandleWithoutTheAgentPrefix() {
+        Person me = newUser();
+
+        assertNotNull(me.getHandle());
+        assertFalse(Handles.isAgentHandle(me.getHandle()),
+                "人的号不带前缀 —— 前缀是「不能改」的标识, 而人的号是可以改的");
+        assertEquals(me.getHandle(), Handles.validate(me.getHandle()));
     }
 
     /** ★ 用户看到的那个症状: 7 行「小满」分不出谁是谁。账号ID 就是来回答这个的。 */
@@ -141,8 +166,8 @@ class PersonHandleTest {
 
     @Test
     void takingAnAlreadyUsedHandleIsRefusedWith409() {
-        Person a = newAgent("小满");
-        Person b = newAgent("小满");
+        Person a = newUser();
+        Person b = newUser();
 
         BusinessException e = assertThrows(BusinessException.class,
                 () -> personService.changeHandle(b.getId(), a.getHandle()));
@@ -157,8 +182,8 @@ class PersonHandleTest {
 
     @Test
     void aTakenHandleIsNotTheVictimsProblem() {
-        Person victim = newAgent("林晓");
-        Person attacker = newAgent("林晓");
+        Person victim = newUser();
+        Person attacker = newUser();
         String victimsHandle = victim.getHandle();
 
         assertThrows(BusinessException.class,
@@ -168,11 +193,85 @@ class PersonHandleTest {
                 "抢号失败不能把原主人的号弄丢");
     }
 
+    // ── Agent 不可改 ─────────────────────────────────────────────────────
+
+    /**
+     * ★ 需求「Agent 的聊天账号ID 不能被修改」—— 这是它的正面断言。
+     */
+    @Test
+    void anAgentMayNotChangeItsHandle() {
+        Person agent = newAgent("小满");
+        String before = agent.getHandle();
+
+        BusinessException e = assertThrows(BusinessException.class,
+                () -> personService.changeHandle(agent.getId(), h("newname")));
+
+        assertEquals(HttpStatus.FORBIDDEN, e.getStatus(),
+                "改不动的东西是 403(禁止), 不是 400(你写错了) —— 后者会诱使用户去改格式");
+        assertEquals(before, personService.requireById(agent.getId()).getHandle(),
+                "被拒之后号必须原封不动");
+    }
+
+    /**
+     * 闸门必须在**形状校验之前**。顺序反了, 用户先收到"你格式写错了"、改对格式之后再被
+     * 同一个 403 挡一次 —— 一次改不动却要试两遍的交互。
+     */
+    @Test
+    void theAgentGateFiresBeforeShapeValidation() {
+        Person agent = newAgent("小满");
+
+        BusinessException e = assertThrows(BusinessException.class,
+                () -> personService.changeHandle(agent.getId(), "小满"));
+
+        assertEquals(HttpStatus.FORBIDDEN, e.getStatus(),
+                "形状也错时应当报 403 —— 格式对不对根本不影响结论, 不该让用户白改一遍");
+    }
+
+    /** OTHER(数字人社交圈里的虚构人物)同样不是能自选账号的东西。 */
+    @Test
+    void anImaginaryPersonMayNotChooseAHandleEither() {
+        Person imaginary = personService.createOther("邻居", "male", Map.of());
+
+        BusinessException e = assertThrows(BusinessException.class,
+                () -> personService.changeHandle(imaginary.getId(), h("neighbor")));
+
+        assertEquals(HttpStatus.FORBIDDEN, e.getStatus());
+    }
+
+    /** 浏览器那条路: 手里只有登录用户的 userId, 没有 personId。 */
+    @Test
+    void aUserCanChangeTheirOwnHandleByUserId() {
+        String uid = UUID.randomUUID().toString();
+
+        HandleQuota q = personService.changeUserHandle(uid, h("myname"));
+
+        assertEquals(h("myname"), q.handle());
+        assertEquals(1, q.used());
+    }
+
+    /**
+     * {@code changeUserHandle} 对**还没有 Person 行**的真人也要能用。
+     *
+     * <p>这不是边界情况: 补号 runner 只给"有伴侣的 owner"建过 Person, 所以 {@code users} 里
+     * 相当一部分真人没有 Person 行 —— 对他们来说, 第一次打开改号页就是他们第一次拥有 Person。
+     * 直接 {@code requireByUserId} 会让这些人收到 404 而不是一个账号ID。
+     */
+    @Test
+    void aUserWithNoPersonRowYetGetsOneOnFirstUse() {
+        String uid = UUID.randomUUID().toString();
+
+        HandleQuota first = personService.changeUserHandle(uid, h("newcomer"));
+
+        assertNotNull(first.handle());
+        assertEquals(1, first.used());
+        assertNotNull(personService.requireByUserId(uid), "第一次改号应当顺手把 Person 行建出来");
+    }
+
     // ── 配额 ──────────────────────────────────────────────────────────────
 
     @Test
     void changingToTheSameValueIsNotAChangeAndCostsNothing() {
-        Person a = newAgent("小满");
+        Person a = newUser();
         String handle = a.getHandle();
 
         HandleQuota q = personService.changeHandle(a.getId(), handle);
@@ -184,7 +283,7 @@ class PersonHandleTest {
 
     @Test
     void theShapeIsNormalizedRatherThanRejected() {
-        Person a = newAgent("小满");
+        Person a = newUser();
         String wanted = h("xiaoman");
 
         HandleQuota q = personService.changeHandle(a.getId(), "  " + wanted.toUpperCase() + "  ");
@@ -194,7 +293,7 @@ class PersonHandleTest {
 
     @Test
     void threeChangesAreAllowedAndTheFourthIsRefusedWith429() {
-        Person a = newAgent("小满");
+        Person a = newUser();
         String third = h("xiaoman3");
 
         assertEquals(2, personService.changeHandle(a.getId(), h("xiaoman1")).remaining());
@@ -212,7 +311,7 @@ class PersonHandleTest {
     /** 配额是**滑动 365 天**, 不是自然年 —— 老的那次滑出窗口, 额度自动回来。 */
     @Test
     void quotaComesBackWhenTheOldestChangeSlidesOutOfTheWindow() {
-        Person a = newAgent("小满");
+        Person a = newUser();
         String id = a.getId();
 
         recordChange(id, "old1", "old2", LocalDateTime.now().minusDays(400));
@@ -231,7 +330,7 @@ class PersonHandleTest {
 
     @Test
     void nextChangeAtIsReportedOnlyWhenTheQuotaIsExhausted() {
-        Person a = newAgent("小满");
+        Person a = newUser();
         String id = a.getId();
 
         LocalDateTime oldest = LocalDateTime.now().minusDays(300);
@@ -257,7 +356,7 @@ class PersonHandleTest {
     /** 窗口边界: 恰好 365 天前的那次已经不算数了(否则窗口永远关不上)。 */
     @Test
     void aChangeExactlyAtTheWindowEdgeNoLongerCounts() {
-        Person a = newAgent("小满");
+        Person a = newUser();
         recordChange(a.getId(), "h0", "h1", LocalDateTime.now().minusDays(366));
 
         assertEquals(0, personService.quotaOf(a.getId()).used());
@@ -272,7 +371,7 @@ class PersonHandleTest {
      */
     @Test
     void aMalformedHandleIsRejectedOnShapeNotOnQuota() {
-        Person a = newAgent("小满");
+        Person a = newUser();
         String id = a.getId();
         recordChange(id, "h0", "h1", LocalDateTime.now().minusDays(1));
         recordChange(id, "h1", "h2", LocalDateTime.now().minusDays(1));
@@ -346,5 +445,44 @@ class PersonHandleTest {
         assertEquals(handle, personService.ensureHandle(a).getHandle());
         assertEquals(handle, personService.ensureHandle(personService.requireById(a.getId())).getHandle(),
                 "已经报出去的号不能被补号流程换掉");
+    }
+
+    // ── 系统重铸(存量迁移) ───────────────────────────────────────────────
+
+    /**
+     * 重铸是**系统**改号, 所以它不受"Agent 不可改号"那道闸门约束 —— 那道闸门挡的是
+     * 用户发起的改号。区分这两件事的是"谁在发起", 不是"改的是谁"。
+     */
+    @Test
+    void remintingGivesAnAgentALegacyHandleThePrefixAndKeepsTheOldOnRecord() {
+        Person agent = newAgent("小满");
+        // 模拟存量: 手工把号改成旧形状(无前缀的 10 位随机)
+        String legacy = Handles.generate(new java.util.Random(42L));
+        Person stale = personService.requireById(agent.getId());
+        stale.setHandle(legacy);
+        persons.save(stale);
+
+        Person reminted = personService.remintAgentHandle(agent.getId());
+
+        assertTrue(Handles.isAgentHandle(reminted.getHandle()), "重铸后必须带前缀");
+        assertNotEquals(legacy, reminted.getHandle(), "必须真的换了一个号");
+        assertEquals(reminted.getHandle(), personService.requireById(agent.getId()).getHandle(),
+                "落库的必须是新号");
+
+        // 旧号必须留在流水里 —— 那是"别人手里那个旧地址"的唯一线索
+        boolean recorded = changes.findAll().stream().anyMatch(c ->
+                agent.getId().equals(c.getPersonId())
+                        && legacy.equals(c.getOldHandle())
+                        && reminted.getHandle().equals(c.getNewHandle()));
+        assertTrue(recorded, "重铸必须留下 old → new 的流水");
+    }
+
+    @Test
+    void remintingIsRefusedForNonAgents() {
+        Person me = newUser();
+
+        assertThrows(IllegalStateException.class,
+                () -> personService.remintAgentHandle(me.getId()),
+                "这条路径只给存量 Agent 用, 用在人身上应当立刻炸而不是静默改号");
     }
 }

@@ -175,33 +175,21 @@ public class CompanionController {
         return companionService.listPersonaVersions(id);
     }
 
-    /**
-     * 账号ID 的现状 —— 设置页打开时读一次, 用来显示"还能改几次 / 下次能改是哪天"。
+    /*
+     * 这里**没有** `GET/PUT /{id}/handle` —— 它们随"Agent 的聊天账号ID 不可修改"一起删掉了。
      *
-     * <p>与 {@code PUT} 分开而不是塞进 {@code CompanionDto}: 配额只有设置页关心, 而
-     * {@code CompanionDto} 是通讯录每一行都要传的东西。放在那里等于每次列通讯录都多算一遍
-     * 配额(要查流水表)。
-     */
-    @GetMapping("/{id}/handle")
-    public CompanionDtos.HandleView handle(@PathVariable String id) {
-        companionService.requireOwned(currentUser.requireUserId(), id);
-        return CompanionDtos.HandleView.of(personService.quotaOf(id));
-    }
-
-    /**
-     * 改账号ID —— 唯一性 + 每 365 天三次配额, 规则在 {@code PersonService#changeHandle}。
+     * 删而不是留一个恒 403 的路由: 一个存在但永远拒绝的端点会诱使后来者把它重新打开
+     * (它是这条规则最像"合理的实现位置"的地方), 而删掉之后语义是明确的 ——
+     * **这个操作不存在**。真正的保证仍在 PersonService.changeHandle 的类型闸门里,
+     * 端点不存在只是第二道防线(否则任何一个新加的调用点都能绕过它)。
      *
-     * <p>归属先查: {@code requireOwned} 会把"不存在"、"不是我的"、"已删除"统一报成 404,
-     * 所以别人的 Agent 改不了号。校验失败分别报 400(形状)、409(被占用)、429(配额用尽),
-     * 前端据此给不同的提示 —— 三者对用户来说是三件不同的事, 合成一个"修改失败"等于
-     * 让用户自己猜该改什么。
+     * 读账号ID 的那条也一并删了, 但不是因为不可读 —— 而是因为它本来就多余:
+     * `CompanionDto.handle` 已经带着账号ID(见下面的 toDto), 而它是通讯录每一行都在传的
+     * 东西。设置页原先多打的那一次请求, 换来的只是同一个值。
+     *
+     * 真人改自己的账号ID 走 8091 的 `/api/persons/me/handle` —— 见 PersonController,
+     * 那里解释了为什么主语必须是"me"而不是一个 id。
      */
-    @PutMapping("/{id}/handle")
-    public CompanionDtos.HandleView updateHandle(@PathVariable String id,
-                                                  @RequestBody CompanionDtos.UpdateHandleRequest req) {
-        companionService.requireOwned(currentUser.requireUserId(), id);
-        return CompanionDtos.HandleView.of(personService.changeHandle(id, req.getHandle()));
-    }
 
     private CompanionDtos.CompanionDto toDto(String userId, Companion c) {
         return toDto(userId, c, personService.handleOfCompanion(c.getId()));
