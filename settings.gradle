@@ -9,7 +9,7 @@
 //   openapi/                         对外 OpenAPI 服务（第 2 个服务, 端口 8092）
 //
 // 契约先行: 本仓消费仓 1(chat-platform) 的 contract artifact
-// （com.luxera:contract:1.0.0, 由仓 1 `gradle :contract:publishToMavenLocal` 发布）。
+// （com.luxera:contract:1.0.1, 由仓 1 `gradle :contract:publishToMavenLocal` 发布）。
 // ChatWorldPort / ApplicationRuntimePort / CompanionDirectoryPort 等 SPI 端口
 // 都在 contract 里 —— 本仓对 chat 世界的全部认知止于此。
 

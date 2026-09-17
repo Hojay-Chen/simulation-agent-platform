@@ -134,10 +134,10 @@ else
 fi
 
 # contract artifact 可解析(发布过 publishToMavenLocal)
-if [[ -f "$HOME/.m2/repository/com/luxera/contract/1.0.0/contract-1.0.0.jar" ]]; then
-  ok "contract:1.0.0 artifact 在 mavenLocal(仓 1 执行 gradle :contract:publishToMavenLocal)"
+if [[ -f "$HOME/.m2/repository/com/luxera/contract/1.0.1/contract-1.0.1.jar" ]]; then
+  ok "contract:1.0.1 artifact 在 mavenLocal(仓 1 执行 gradle :contract:publishToMavenLocal)"
 else
-  bad "mavenLocal 缺 com.luxera:contract:1.0.0 —— 先在仓 1(chat-platform) 发布"
+  bad "mavenLocal 缺 com.luxera:contract:1.0.1 —— 先在仓 1(chat-platform) 发布"
 fi
 
 if [[ "$fail" -eq 0 ]]; then

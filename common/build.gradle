@@ -14,7 +14,7 @@
 //     OutboxRelayJob 消费 —— OutboxPublisher/Repository 在这边是消费侧。
 
 dependencies {
-    api 'com.luxera:contract:1.0.0'
+    api 'com.luxera:contract:1.0.1'
     api 'org.springframework.boot:spring-boot-starter-web'
     api 'org.springframework.boot:spring-boot-starter-data-jpa'
     implementation 'org.springframework.boot:spring-boot-starter-security'

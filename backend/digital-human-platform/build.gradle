@@ -5,7 +5,7 @@
 // 目录名保持 backend/digital-human-platform 是 git log --follow 穿历史的硬前提。
 //
 // 对外认知只有两条:
-//   - contract artifact(仓 1 发布的 com.luxera:contract:1.0.0):
+//   - contract artifact(仓 1 发布的 com.luxera:contract:1.0.1):
 //     ChatWorldPort / ApplicationRuntimePort / SimulatorAccessPort / MessageView 等;
 //   - 本仓 common: kernel 类(User/AppProperties/Outbox 等)。
 // 不认识 chat / application 的任何实现类 —— 这条由 scripts/check-agent.sh 守卫。

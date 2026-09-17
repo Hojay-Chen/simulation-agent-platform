@@ -1,7 +1,7 @@
 // simulation-agent-platform 根构建 —— 插件版本、仓库、公共配置都在这一份里。
 //
 // 版本口径与仓 1(chat-platform) 完全一致: Spring Boot 2.7.18 / JDK 17 / javax.* 生态。
-// 仓库顺序: mavenLocal 优先（contract:1.0.0 由仓 1 发布在这里）, 其次阿里云镜像。
+// 仓库顺序: mavenLocal 优先（contract:1.0.1 由仓 1 发布在这里）, 其次阿里云镜像。
 //
 // Java 包名保持 com.luxera.companion.*（与仓 1 相同的哲学: 改包名零收益纯风险,
 // 拆分在 Gradle 项目边界与仓库边界上表达）。

@@ -57,11 +57,34 @@ public class CompanionService {
     /** 创建伴侣 —— 同时建立 Person 身份层 + 按关系类型初始化真实关系状态 */
     @Transactional
     public Companion create(String userId, Persona persona, String relationshipType) {
+        return create(userId, persona, relationshipType, null, null);
+    }
+
+    /**
+     * 创建伴侣, 并且把"它在聊天平台用哪个账号"与"是哪个客户端建的"一起记下来。
+     *
+     * <p>多出来的两个参数都是**可空的跨平台痕迹**, 不加它们也能建出 agent —— 但那样
+     * 聊天平台一键创建的 agent 就永远是"哑的": 它在聊天平台有自己的账号, 而本仓不知道
+     * 那个账号是哪个, 于是既不能把消息记到正确的 sender 上, 也没法按聊天账号反查。
+     *
+     * <ul>
+     *   <li>{@code chatAccountId} —— 聊天平台的 {@code users.id}。唯一约束在数据库上,
+     *       幂等性由此而来(见 {@code Companion#chatAccountId})。</li>
+     *   <li>{@code createdByClientId} —— 哪个 API 客户端建的。真人经聊天平台创建时为空。</li>
+     * </ul>
+     *
+     * <p>{@code userId} 仍然是"归谁所有"的唯一答案 —— 代建时它是**真人**, 不是客户端。
+     */
+    @Transactional
+    public Companion create(String userId, Persona persona, String relationshipType,
+                            String chatAccountId, String createdByClientId) {
         compiler.fillDefaults(persona);
         Persona p = persona;
         Companion c = new Companion();
         applyIdentity(c, p);
         c.setUserId(userId);
+        c.setChatAccountId(chatAccountId);
+        c.setCreatedByClientId(createdByClientId);
         companions.save(c);
 
         personaService.saveInitial(c.getId(), p);
@@ -115,6 +138,41 @@ public class CompanionService {
     @Transactional(readOnly = true)
     public List<Companion> list(String userId) {
         return companions.findByUserIdAndDeletedAtIsNullOrderByCreatedAtAsc(userId);
+    }
+
+    /**
+     * 一个 API 客户端看得见的 agent —— **只给 8092 用**。
+     *
+     * <p>与 {@link #list(String)} 分开而不是让 8092 也调那一个: 那一个的判据是
+     * {@code user_id = 自己}, 而代建出来的 agent 的 {@code user_id} 是**真人的**,
+     * 于是聊天平台建的 agent 会在建它的那个客户端的列表里凭空消失 —— 建完就"查无此 agent",
+     * 而这个失败只在真的走一遍一键创建时才看得见。判据的三个分支见
+     * {@code CompanionRepository#findVisibleToClient}。
+     *
+     * <p>它**只用于读**: 写路径仍走 {@link #requireOwned}, 所以代建的 agent 看得见、
+     * 改不动也删不掉 —— 代建不等于拥有。
+     */
+    @Transactional(readOnly = true)
+    public List<Companion> listVisibleToClient(String clientId) {
+        return companions.findVisibleToClient(clientId);
+    }
+
+    /** 可见集里的单条 —— 与 {@link #listVisibleToClient(String)} 同一个判据(见仓储里的常量)。 */
+    @Transactional(readOnly = true)
+    public java.util.Optional<Companion> findVisibleToClient(String clientId, String agentId) {
+        return companions.findVisibleToClientById(clientId, agentId);
+    }
+
+    /**
+     * 按聊天账号找 agent —— 一键创建的**幂等键**。
+     *
+     * <p>故意把已删除的也带回来(而不是过滤掉): 调用方需要区分"这个账号还没建过"与
+     * "建过但后来被删了", 而这两种情况要给的答复完全不同 —— 后者绝不能悄悄复活一个
+     * 用户已经删掉的 agent。
+     */
+    @Transactional(readOnly = true)
+    public java.util.Optional<Companion> findByChatAccountId(String chatAccountId) {
+        return companions.findByChatAccountId(chatAccountId);
     }
 
     /**

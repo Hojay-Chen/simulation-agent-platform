@@ -25,6 +25,12 @@ import java.util.UUID;
  * <p>归属映射: 三方建的 agent 落 {@code companions} 表时, {@code user_id} 放
  * 本表的 id —— 仓 1 的 {@code CompanionDirectoryPort.requireOwned} 因此天然工作,
  * 认知链(server:8091)照常把它当自己的 agent 推进, 跨服务零改动。
+ *
+ * <p><b>{@link #canActForUsers} 是一道默认关闭的闸门。</b>开着它, 这个客户端才可以在
+ * 创建 agent 时指定 {@code ownerUserId = 某个真人} —— 也就是"代建"。聊天平台的一键创建
+ * 需要这个能力(它替登录用户建 agent, 而那个 agent 必须归**用户**所有, 否则用户在自己的
+ * 通讯录里看不到它)。默认 false 意味着: 新登记的一把 {@code sap_} key 永远只能给自己
+ * 建 agent, 想代建得由平台显式开。
  */
 @Entity
 @Table(name = "openapi_clients", indexes = {
@@ -55,6 +61,38 @@ public class OpenApiClientRecord {
     /** 可空 — 将来挂真人所有者(管理面看到"这是谁的客户端")。 */
     @Column(name = "owner_user_id", length = 36)
     private String ownerUserId;
+
+    /**
+     * 这个客户端能否在创建 agent 时指定 {@code ownerUserId}(代建)。默认 false。
+     *
+     * <h2>为什么是可空列 + 包装类型 + 一个自己的读取方法</h2>
+     *
+     * 三件事都是为了同一个坑: 这一列是**加在有数据的表上的新列**。
+     *
+     * <ol>
+     *   <li>{@code nullable = false} 会直接失败 —— {@code ddl-auto: update} 生成的是
+     *       {@code add column ... boolean not null}(不带默认值), 而 PostgreSQL 在表里
+     *       已经有行时拒绝这条语句。所以列必须可空, 既有的行落成 NULL。</li>
+     *   <li>NULL 落到 {@code boolean} 基本类型上会在读取时抛, 所以字段用 {@code Boolean}。</li>
+     *   <li>读取一律走 {@link #canActForUsers()} 而不是 Lombok 的
+     *       {@code getCanActForUsers()} —— 后者把 null 原样交出去, 调用点那句
+     *       {@code if (!client.canActForUsers())} 就还安全(基本类型方法签名), 但任何直接
+     *       比较 {@code Boolean} 的写法都会掉进"null 不等于 true 也不等于 false"的缝里。
+     *       <b>闸门读错方向比闸门不存在更糟: 它看起来是开着的。</b></li>
+     * </ol>
+     */
+    @Column(name = "can_act_for_users")
+    private Boolean canActForUsers = false;
+
+    /**
+     * 代建权限的**唯一**读法 —— 把 null(加列之前建的行)收成 false。
+     *
+     * <p>与 Lombok 生成的 {@code getCanActForUsers()} 并存不冲突, 但调用方只该用这一个:
+     * 名字短、返回基本类型、且"没有值 = 没有权限"这条默认写死在方法体里而不是散在调用点。
+     */
+    public boolean canActForUsers() {
+        return Boolean.TRUE.equals(canActForUsers);
+    }
 
     @Column(nullable = false, length = 16)
     private String status = STATUS_ACTIVE;
