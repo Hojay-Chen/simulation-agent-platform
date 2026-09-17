@@ -19,6 +19,7 @@ import org.springframework.web.bind.annotation.RestController;
 import javax.validation.Valid;
 import java.time.LocalDate;
 import java.util.List;
+import java.util.Map;
 
 @RestController
 @RequestMapping("/api/companions")
@@ -27,6 +28,15 @@ public class CompanionController {
     private final CompanionService companionService;
     private final RelationshipService relationshipService;
     private final CurrentUser currentUser;
+    /**
+     * 账号ID 住在 {@code persons}(用户与 Agent 都是 Person), 所以由它来读写。
+     *
+     * <p>注入点选在**控制器**而不是 {@code CompanionService}, 是因为控制器只被 server(8091)
+     * 注册 —— 8092(openapi)的扫描白名单里没有任何 {@code *Controller}。而
+     * {@code CompanionService} 是两个进程共用的, 往它身上挂依赖要连带确认 8092 装得下
+     * (2026-09-17 那次 {@code NoSuchBeanDefinitionException} 就是这么来的)。
+     */
+    private final com.luxera.companion.person.PersonService personService;
     /**
      * 完整的删除。刻意不是 {@code CompanionService#delete} —— 后者只是软删除, 因为
      * 8092(openapi)也调它而那个进程刻意没有认知链的依赖。见 {@code AgentRetirementService}。
@@ -37,11 +47,13 @@ public class CompanionController {
     public CompanionController(CompanionService companionService,
                                RelationshipService relationshipService,
                                CurrentUser currentUser,
-                               AgentRetirementService retirement) {
+                               AgentRetirementService retirement,
+                               com.luxera.companion.person.PersonService personService) {
         this.companionService = companionService;
         this.relationshipService = relationshipService;
         this.currentUser = currentUser;
         this.retirement = retirement;
+        this.personService = personService;
     }
 
     /** 自然语言 → 编译人格 + 默认场景预览 */
@@ -66,7 +78,12 @@ public class CompanionController {
     @GetMapping
     public List<CompanionDtos.CompanionDto> list() {
         String userId = currentUser.requireUserId();
-        return companionService.list(userId).stream().map(c -> toDto(userId, c)).toList();
+        List<Companion> all = companionService.list(userId);
+        // 账号ID 一次取完, 不是"每行再查一次" —— 通讯录正是唯一会长到几十行的那一屏,
+        // 而 N+1 的写法在这里看起来和正确写法一模一样(见 PersonService#handlesOfCompanions)
+        Map<String, String> handles = personService.handlesOfCompanions(
+                all.stream().map(Companion::getId).toList());
+        return all.stream().map(c -> toDto(userId, c, handles.get(c.getId()))).toList();
     }
 
     @PostMapping
@@ -158,10 +175,43 @@ public class CompanionController {
         return companionService.listPersonaVersions(id);
     }
 
+    /**
+     * 账号ID 的现状 —— 设置页打开时读一次, 用来显示"还能改几次 / 下次能改是哪天"。
+     *
+     * <p>与 {@code PUT} 分开而不是塞进 {@code CompanionDto}: 配额只有设置页关心, 而
+     * {@code CompanionDto} 是通讯录每一行都要传的东西。放在那里等于每次列通讯录都多算一遍
+     * 配额(要查流水表)。
+     */
+    @GetMapping("/{id}/handle")
+    public CompanionDtos.HandleView handle(@PathVariable String id) {
+        companionService.requireOwned(currentUser.requireUserId(), id);
+        return CompanionDtos.HandleView.of(personService.quotaOf(id));
+    }
+
+    /**
+     * 改账号ID —— 唯一性 + 每 365 天三次配额, 规则在 {@code PersonService#changeHandle}。
+     *
+     * <p>归属先查: {@code requireOwned} 会把"不存在"、"不是我的"、"已删除"统一报成 404,
+     * 所以别人的 Agent 改不了号。校验失败分别报 400(形状)、409(被占用)、429(配额用尽),
+     * 前端据此给不同的提示 —— 三者对用户来说是三件不同的事, 合成一个"修改失败"等于
+     * 让用户自己猜该改什么。
+     */
+    @PutMapping("/{id}/handle")
+    public CompanionDtos.HandleView updateHandle(@PathVariable String id,
+                                                  @RequestBody CompanionDtos.UpdateHandleRequest req) {
+        companionService.requireOwned(currentUser.requireUserId(), id);
+        return CompanionDtos.HandleView.of(personService.changeHandle(id, req.getHandle()));
+    }
+
     private CompanionDtos.CompanionDto toDto(String userId, Companion c) {
+        return toDto(userId, c, personService.handleOfCompanion(c.getId()));
+    }
+
+    private CompanionDtos.CompanionDto toDto(String userId, Companion c, String handle) {
         CompanionDtos.CompanionDto dto = new CompanionDtos.CompanionDto();
         dto.setId(c.getId());
         dto.setName(c.getName());
+        dto.setHandle(handle);
         dto.setGender(c.getGender());
         dto.setAge(c.getBirthDate() != null ? c.age() : null);
         dto.setBirthDate(c.getBirthDate());
