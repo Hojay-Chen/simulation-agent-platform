@@ -77,7 +77,12 @@ export function AgentCreateForm({ onSubmit, submitting, error }: {
       <Field
         label="人格描述"
         error={shown.description}
-        hint="例: 一位在旧书店工作的女孩, 说话慢, 喜欢在雨天聊诗, 偶尔健忘。"
+        // 例子不该暗示一种默认。原文是「一位在旧书店工作的女孩, 说话慢, 喜欢在
+        // 雨天聊诗, 偶尔健忘」—— 那个"女孩"是伴侣时代的默认(agent 恒为女性),
+        // 而 agent 现在是按用户需求生成的: 它可以是任何性别、任何年纪。
+        // 换成同样有质感、但没有性别标记的一个, 顺手把年龄也拉开一点 ——
+        // 例子是用户唯一的参照物, 它长什么样, 用户就照着写什么样。
+        hint="例: 一位退休的地理老师, 说话慢, 喜欢在雨天聊诗, 偶尔健忘。"
       >
         <textarea
           className={`${inputClass} min-h-[104px] resize-y`}
