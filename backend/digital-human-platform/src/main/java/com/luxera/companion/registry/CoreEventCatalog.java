@@ -593,6 +593,32 @@ public final class CoreEventCatalog {
                     .consumer("RealtimeEventQueue → AttentionService")
                     .build(),
 
+            def("mind.decision-made.v1")
+                    .category(Category.STATE_EFFECT)
+                    .payload("decisionId: String, reasonCode: String, narrative: String, "
+                            + "actionCount: int, planMutationCount: int")
+                    .semantics("她做过一次决定 —— <b>包括“她决定什么都不做”那次</b>。"
+                            + "没有这条事件时, “她没回那条消息”与“她没看见那条消息”"
+                            + "以及“回消息的代码还没写”在数据上完全一样; 有了它, "
+                            + "“她今天做过的决定有多少、理由分布是什么”才是一个可统计的量。"
+                            + "载荷刻意只带摘要不带正文: 正文属于动作参数, 记两处迟早不一致")
+                    .producer("human.mind.decision.DecisionEngine")
+                    .consumer("EventStore; 行为分析; 前端时间轴")
+                    .build(),
+
+            def("mind.relationship-bound.v1")
+                    .category(Category.STATE_EFFECT)
+                    .payload("accountId: String, personId: String, personName: String, "
+                            + "reasonKind: String, reasonDetail: String")
+                    .semantics("她的通讯录里多了一个人。§3.4.6 那句“她的通讯录是她自己长出来的, "
+                            + "不是从聊天平台同步下来的”是一条可验证的断言, 而验证它靠的正是这条事件 —— "
+                            + "bootstrap 那一条不算, 其余每一条都是一次真实的建立过程。"
+                            + "没有它, 通讯录只是一张当前状态快照, 而快照区分不了“她自己认识了 12 个人”"
+                            + "与“平台同步了 12 个人”")
+                    .producer("human.mind.Mind")
+                    .consumer("EventStore; 行为分析")
+                    .build(),
+
             // ══════════ plan.* — 计划表 (C 类 + 系统) ══════════
             // 用户: "还有一类 event 其实是安排 event...可以理解为这类 event 其实是计划表,
             //        然后可以随时修改的, 而且是时间段类型的"
@@ -703,6 +729,38 @@ public final class CoreEventCatalog {
                             + "只有在历史里能看到“12:30 她脱了外套”时才答得出来")
                     .producer("boundary.event.ContinuousEffectLedger")
                     .consumer("EventStore; 行为分析")
+                    .build(),
+
+            def("system.effect-unreadable.v1")
+                    .category(Category.STATE_EFFECT)
+                    .payload("typeId: EventTypeId, occurredAt: Instant, sourceObjectId: String, "
+                            + "magnitude: double, effectChannel: String, expiresAt: Instant, "
+                            + "cancellationKey: String, unreadableReason: String")
+                    .semantics("恢复账本时, 一条已经入账的持续影响的<b>载荷读不回来了</b>"
+                            + "(产生它的三方类型被卸载、忘了注册, 或者它的到期时刻没能挺过 JSON 往返)。"
+                            + "这时本类被造出来顶替那一行: 四个关键值(magnitude / effectChannel /"
+                            + "cancellationKey / expiresAt)是从 continuous_effect 的<b>真列</b>上读的, "
+                            + "不依赖反序列化, 所以加法与替换判定仍然正确 —— 她身上那件羽绒服的保暖"
+                            + "不会凭空归零。"
+                            + "<b>为什么它是 STATE_EFFECT 而不是别的类别</b>: 它是一条已经入账的事实的"
+                            + "替身, 唯一的去处是账本(A 类)。它<b>不是</b> SENSORY —— 她不会因为"
+                            + "'有一行读不出来'而受到惊动, 把它塞进刺激队列会让一次运维问题"
+                            + "变成她的一次情绪波动; 也不是 SCHEDULED —— 它不产生任何计划改动。"
+                            + "<b>不能结算、也不能丢弃, 只能记下来</b>: 语义丢了, 但影响还在。"
+                            + "丢弃它(跳过这一行)会让她的状态凭空改变且没有任何事件解释这个改变 —— "
+                            + "那是本设计里最刺眼的一类错误; 而降级成'一条中性的账目'会让"
+                            + "Settlement.why(channel) 对着她说不清'我为什么觉得冷'。"
+                            + "所以本类的取舍是: <b>先保证她的状态对, 再谈解释得清不清楚</b>, "
+                            + "同时把'解释不清'这件事本身变成可观测的 —— EffectLedgerStore.restore "
+                            + "会为每一条这样的账目记一条 WARN(带 humanId 与条数), "
+                            + "而本条目录项是那份计数将来进时间轴的落点: 前端应当能看到"
+                            + "'这一刻她的账本里有几条已失效语义的影响, 等人处理'。"
+                            + "OpaqueEffect <b>绝不</b>会被写回数据库(EffectLedgerStore.snapshot 会直接抛), "
+                            + "因为它的类型名是合成的, 写回去会用'认不出来'覆盖掉那一列 JSON —— "
+                            + "而那是把原类型找回来的唯一线索")
+                    .producer("boundary.event.ContinuousEffectLedger 的读取侧"
+                            + " (persistence.store.EffectLedgerStore.restore)")
+                    .consumer("ContinuousEffectLedger (以替身入账); 运维告警 / 诊断面板")
                     .build(),
 
             def("system.plan-validation-failed.v1")

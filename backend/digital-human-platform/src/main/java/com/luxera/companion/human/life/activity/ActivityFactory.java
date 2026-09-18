@@ -145,6 +145,95 @@ public final class ActivityFactory {
         return created;
     }
 
+    /**
+     * 从数据库读回来的一次执行 —— <b>{@link #start} 的逆运算</b>。
+     *
+     * <h2>为什么必须走这里, 而不是让持久化层自己 new 一个</h2>
+     * 两条路都不行:
+     * <ul>
+     *   <li><b>持久化层 new 不了</b>: 它看不见 {@code CommonFields}（{@code protected}）,
+     *       也拿不到某类活动的"同类型换字段"那一处样板
+     *       （{@code AbstractActivity.create} 是 {@code protected abstract}）。
+     *       这两条限制是刻意的 —— 活动内部形状不该被外部直接摆弄;</li>
+     *   <li><b>用反射填字段更不行</b>: 它会把"少恢复了一个字段"变成一个静默的
+     *       {@code null}, 于是她要带着半个自己的状态继续活 ——
+     *       而一个状态不全的 agent 比一个起不来的 agent 难查得多。</li>
+     * </ul>
+     *
+     * <h2>为什么 {@code activityType} 与 {@code snapshot.intent()} 是两个参数</h2>
+     * 它们<b>不一定一致</b>, 而那个不一致本身就是数据（见 {@code AbstractActivity}
+     * 关于"为什么这些类上没有 Jackson 注解"那一节）:
+     * 意图说 {@code life.activity.gaming}, 而 {@code ActivityFactory} 当时因为三方
+     * 没注册而落到了 {@code OtherActivity}。于是这一行记录的是
+     * "她<b>实际</b>做的那一类"（{@code activity_type} 列）,
+     * 而 {@code intent} 是"她当时想的"（{@code intent_json} 列）。
+     *
+     * <p>恢复时必须<b>按 {@code activityType} 找类</b>, 而不是按
+     * {@code intent.activityType()} —— 否则一次"三方忘了注册"的历史会被
+     * 恢复成另一类活动, 于是"她本来要做的事没做成"这条记录在重启后消失。
+     * 这正是一直复用 {@code start} 会导致的错误。
+     *
+     * <h2>约束: 能被恢复的活动类型必须继承 {@code AbstractActivity}</h2>
+     * 这是本方法唯一的前置条件, 而它<b>会在违反时抛异常</b>而不是降级 ——
+     * 降级的后果是"恢复出来的活动的 id 与库里的不一样", 而那会让所有指向
+     * 这条执行的后续事件悬空。第三方要接入并被持久化, 继承
+     * {@link AbstractActivity} 是必要条件。
+     *
+     * @throws IllegalStateException 那个类型的实现不是 {@code AbstractActivity} 的子类
+     */
+    public static Activity restore(String activityType, ActivitySnapshot snapshot) {
+        Objects.requireNonNull(activityType, "恢复一次执行必须知道它属于哪一类活动");
+        Objects.requireNonNull(snapshot, "恢复一次执行必须带快照 —— 没有字段就无从恢复");
+
+        Activity created = instantiate(activityType, snapshot);
+        if (!(created instanceof AbstractActivity base)) {
+            throw new IllegalStateException(
+                    "活动类型 " + activityType + " 的实现是 " + created.getClass().getName()
+                            + ", 它不是 AbstractActivity 的子类 —— 因此无法把库里读出来的"
+                            + " id / 状态 / 结束时刻 灌回它。"
+                            + "继续下去只有两条路, 而两条都是错的: 要么用一个新生成的 id"
+                            + "（于是所有指向这条执行的后续事件悬空）, 要么丢掉库里那个状态"
+                            + "（于是她带着错误的状态继续活）。请让这个类型继承 AbstractActivity。");
+        }
+
+        AbstractActivity.CommonFields fields = AbstractActivity.CommonFields.restore(
+                snapshot.id(), snapshot.intent(), snapshot.planItemId(), snapshot.startedAt(),
+                snapshot.state(), snapshot.endedAt(), snapshot.closingNote(),
+                snapshot.finalProgress());
+        return base.create(fields);
+    }
+
+    /**
+     * 造一个该类型的实例, <b>字段还是空的</b> —— {@link #restore} 的前半步。
+     *
+     * <p>刻意与 {@link #start} 共用同一条"找不到就落 {@code OtherActivity}"的降级路径,
+     * 但<b>不</b>共用 {@code start} 本身: {@code start} 用的是
+     * {@code intent.activityType()} 去找类, 而恢复要找的是
+     * {@code activity_type} 那一列（见 {@code restore} 的说明）。
+     * 这两个输入不总是一样, 而那正是这张表要保存的信息。
+     */
+    private static Activity instantiate(String activityType, ActivitySnapshot snapshot) {
+        ActivityCreator creator = CREATORS.get(activityType);
+        if (creator == null) {
+            synchronized (ActivityFactory.class) {
+                unregisteredUses++;
+            }
+            log.warn("[ActivityFactory] 恢复执行 {} 时, 活动类型 {} 没有注册任何实现, "
+                            + "落到中庸档案的 OtherActivity。"
+                            + "这通常意味着某个三方忘了注册, 或者它已经被卸载",
+                    snapshot.id(), activityType);
+            return new OtherActivity(snapshot.intent(), snapshot.startedAt(), snapshot.planItemId());
+        }
+        Activity created = creator.create(snapshot.intent(), snapshot.startedAt(),
+                snapshot.planItemId());
+        if (created == null) {
+            log.error("[ActivityFactory] 类型 {} 的构造器返回了 null（恢复路径）—— "
+                    + "落到 OtherActivity, 但这是那一段代码的 bug", activityType);
+            return new OtherActivity(snapshot.intent(), snapshot.startedAt(), snapshot.planItemId());
+        }
+        return created;
+    }
+
     // ─────────────────────────── 查询与诊断 ───────────────────────────
 
     public static Optional<ActivityCreator> creatorFor(String activityType) {
