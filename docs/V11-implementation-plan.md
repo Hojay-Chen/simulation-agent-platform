@@ -343,7 +343,124 @@ Life / OpenLoop / **Wakeup** 三类，**没有为 Relationship 单独做 emitter
 
 ### Phase 6：旧链清理
 
-旧 `MessagePipeline` 无核心职责后再删。保留 adapter 的地方写清为什么保留。
+原计划只有一句：旧 `MessagePipeline` 无核心职责后再删。保留 adapter 的地方写清为什么保留。
+
+#### 先说结论：切流还没发生，所以"删 MessagePipeline"今天做不到，也不该做
+
+§25.1 的顺序是 Adapter → Shadow → Dual Run → **Cutover** → Cleanup，而 Cutover 的前置是
+真实流量下的 shadow 分歧率可读（Phase 2 的前置条件 ②）。四个开关今天全部是
+`enabled=false / shadow=true`（`backend/server/src/main/resources/application.yml`）。
+在这个状态下老链不是"可以删的遗留物"，它是**唯一真的在回话的那条路**：
+
+| 老链部件 | 今天为什么还不能删 |
+|---|---|
+| `MessagePipeline.process` | `AgentRuntime.advanceMind`(:501) 读它的 `attention()` 与 `brainDecision()` 去构造回复输入 |
+| `AgentRuntime.process()`（委托适配器） | `V11TurnSealJob`(:129) 走的就是它 —— 删它得先把回合封口改接到 `advanceMind` |
+| `BehaviorTickJob` | shadow 期她**唯一**会主动开口的地方：Phase 5 的消费者只记账不动手，而这里 `:51` 判的是 `isEffective()` |
+| `PersonDecision` 五策略 + `V10HotpathGateway.shadowEvaluate` | shadow 期每批消息都跑；结果只写进 `ShadowDecisionRecorder` 的内存缓冲，**而那个缓冲没有任何 src/main 读者** |
+
+最后一行是 Phase 2 已经记过的"V10 shadow 是纯成本"，这里补一个更刺眼的说法：
+`app.v10.hotpath.*` 在生产 yml 里**根本没写**，于是跑的是默认值
+`enabled=false, shadow=true` —— 每个聊天批次都算一遍 V10 的感知与决策，算完丢掉。
+它不会报错，也不会被任何断言发现，它只是没人读。
+
+所以本阶段交付四件能做的事，而不是一句"删不掉"。
+
+#### 交付 1：切流演练（`V11CutoverTest`，5 条用例，真库 + 真 Spring 上下文）
+
+前五个阶段的用例全在**开关关着**的默认态下跑。于是有一条风险一直没被覆盖，而它恰好最难事后发现：
+**切流那天是这些接线第一次被执行**。属性名写错一个字母（`@Value` 的默认值会安静地接手）、
+某个消费者没被注册进容器、某个事务边界只在真库上才暴露 —— 单测一个都看不见，
+因为单测里的开关是手工构造的。演练换的是**配置**，所以它检查的是"配置文件到行为"这条线本身。
+
+三条断言值得点名：
+
+1. **四条链都真的切过去了。** 看着像废话，挡的是"四条链里切了三条"那种无声失败。
+2. **`enabled=true` 时老 tick 必须停。** 不停的话她的一次主动行为被两条链各执行一次，
+   而"她一次说了两条"在外观上与"她心情很好"没有区别。
+3. **阶梯事件在真库上仍然没人拆。** `accept` 返回 `true` 只说"信是新收下的"，
+   与"有人拆"无关（`AgentMailbox:115`）—— 所以这条用例断的是"它留在 PENDING"，
+   而不是"投递被拒"。重放也救不了：重放遇到没有消费者的信会原样留在 PENDING。
+   这就是 Phase 2 那条"切流前置条件 ①"在真库上的可见形态。
+
+#### 交付 2：演练当场逮到的一个真缺陷 —— 测试脚手架漏进了每一个 Spring 上下文
+
+演练第一次跑就红了，但它红得有价值：它在容器里逮到的不是生产代码，而是
+`AgentMailboxTest.RecordingConsumer` 这个**测试脚手架**（它 `supports` 一切），
+一个只该活在 `AgentMailboxTest` 自己上下文里的东西。
+
+病根不在那个测试。`DigitalHumanTestApplication` 直接写了一个 `@ComponentScan`，
+而**直接注解会压过元注解** —— `@SpringBootApplication` 元注解上带的
+`TypeExcludeFilter` 就此静默消失。少了它，任何一个测试类里嵌套的 `@TestConfiguration`
+都会被组件扫描收成 bean，进入**所有** 31 个 `@SpringBootTest` 的上下文。
+
+修法是把它显式写回来（连带 `AutoConfigurationExcludeFilter`），安全性是有证据的：
+全仓只有一个 `@TestConfiguration`，而它自己的测试用 `@Import` 显式引入 ——
+`@Import` 不经过组件扫描，所以原本的用法一字未改。
+
+这件事值得单独记一笔，因为它说明了一类失败：**泄漏本身不报错**。
+今天容器里漏进来的只有一个记录器，那是运气；31 个上下文各自带着别人的协作者，
+而"这条用例到底验证了哪条路径"会变成一个需要推理的问题。
+
+#### 交付 3：删掉真正没人调用的东西
+
+`CognitiveDecision` 里的四个单向适配器 —— `from(Outcome, reason)` /
+`fromBrain(action, reason)` / `from(PersonDecision, now)` / `from(PersonDecision)` ——
+在 `src/main` 里**一个调用者都没有**，从头到尾只有它们自己的测试在用。删了。
+
+删掉的理由不是"暂时用不上"，而是它们注释里声称的那件事是**错的**：注释写着
+"shadow 期的差异率靠它把老链的 Outcome 读成新词表算出来"，而真正的差异率在
+`CognitionDecisionRecorder.classify` —— 它比的是**"会不会写一条消息出去"**
+(`DecisionType.producesOutboundMessage`) 与老链这一次到底有没有发消息，**刻意不比决策名字**。
+这是两种对照里更结实的那一种：决策名是两套词表各自的方言，拿方言对齐只会得到一张
+永远需要维护的映射表，而"她会不会开口"不需要翻译。
+
+留着它们的代价很具体：后来的人读到一个"并跑期观察设施"的注释，会去找它在哪被用，
+找不到，只能怀疑自己看漏了。真要按决策名对照时从 git 历史取回即可 ——
+理由与删法写在了 `CognitiveDecision` 类文件的末尾，`AgentRuntime.scheduleWakeup`
+的 javadoc 里那句指向已删方法的解释也一并改掉了。
+
+**保留了一个同样零调用者的类**：`digitalhuman/attention/AttentionPolicies`。
+它没有任何地方调用，但**另一个仓的契约把它写成了自己的一部分** ——
+`chat-platform/contract/.../AttentionPolicy.java` 逐字写着这个映射
+"lives on the DH side (`AttentionPolicies.toPerceptionLevel`)"，并给了理由：
+反向依赖会让 `contracts` 依赖 DH。删它要跨仓改那段文档，收益是三十行代码，不划算。这条记在这里，是为了让它下次被人发现时
+不必重新推一遍。
+
+#### 交付 4：删除清单（每一项都带解锁条件）
+
+不是"以后再说"，而是每一项写清**什么条件下它才可以删**：
+
+| 遗物 | 今天的状态 | 解锁条件 |
+|---|---|---|
+| `AgentRuntime.process()`（委托适配器） | V11 的回合封口走的就是它 | `V11TurnSealJob` 改接 `advanceMind` 之后 |
+| `MessagePipeline.process` | `advanceMind`(:501) 读它的 attention / brainDecision | 回复输入改从 V11 自己的送达评估取之后（`V11DeliveryPath.assess` 已经算出同一套 attention） |
+| `pipelineResult.isDeferred()` 分支 | `enabled=true` 下不可达 | 切流即闭合（Phase 5 已记） |
+| `PersonDecision` 五策略 / `DecisionPolicyEngine` / `PerceptionDecisionOrchestrator` | shadow 期真的在跑，结果无人读 | 与 `V10HotpathGateway` 一起删。它自己藏在 `app.v10.hotpath.enabled=false` 后面 |
+| `ShadowDecisionRecorder` | 只写不读 | 同上。**或者**决定留一条 V10 决策的观测，那就给它接一个读者 —— 今天它是一台对着空房间的录像机 |
+| `PendingMessageReevaluationJob`（每分钟） | **活的**：会真的重跑 Brain、重排 action | 切流前必须回答"DEFER 之后的重新评估谁做"。V11 的闹钟只覆盖了**唤醒**侧，Brain 重评没有移植 |
+| `ScheduledActionJob` + `ScheduledActionDispatcher`（每 20 秒） | 活的循环，但 `ScheduledActionDispatcher.register` **全仓零调用点** → 每个到点的 action 都落到 `handler == null` → `markFailed` | 这份表是老链 DEFER 的产物，随 `MessagePipeline` 一起删。**在那之前它是纯噪声**：它把"她答应过要做的事"逐条记成失败 |
+| `OpenLoopJob` / `LifeTickJob` / `UnfinishedThoughtActivationJob` | 三个老定时器，生产 yml 里 cron **都有值**，所以都在跑 | **未验证** —— 需要逐个确认 V11 的对应物（`OpenLoopDueJob` / `LifeScheduleJob` / `INTENTION_ACTIVATED` 消费者）是否覆盖了它的全部作用。这是全清单里唯一一段"连对应关系都还没核"的，如实记下 |
+
+#### 切流 runbook（真切的那天照这个走）
+
+**前置**（缺一条就别开始）：
+
+1. `GET /api/companions/{id}/v5/v11` 的分歧率已经在真实流量上读过一轮，**且你认得出那个数字**。
+   先看 `errors` 再看分歧率：一个坏掉的 shadow 会给出 `divergenceRate = 0%`（"可以切流了"）。
+2. 阶梯事件有结论（Phase 2 前置条件 ①）—— 它今天仍然零消费者，`V11CutoverTest` 里那条断言就是这道题。
+3. `V11CutoverTest` 全绿。它回答的是"如果明天就切会不会当场炸"，与"该不该切"是两件事。
+
+**顺序**：一次翻一组，翻完看一轮再翻下一组 —— 合成一个开关的后果不是省事，是切流那天无法归因。
+
+1. `app.v11.runtime.enabled=true`（`shadow` 同时置 false）：送达主链换手。看 `turns` 段是否开始有数。
+2. `app.v11.turns.enabled=true`：三句话并成一个回合。
+3. `app.v11.cognition.enabled=true`：**从这里开始"她回不回"由新决策决定**。盯 `wouldSilence` ——
+   切流后它就是"她安静了多少"，而这个数大到某个程度不是"更真实"，是"她坏了"。
+4. `app.v11.proactive.enabled=true`：最后翻它。前三个只改"她怎么回"，这一个改"她会不会先开口"。
+
+**回滚**：把翻过的开关翻回 `enabled=false` 再部署。**不要**用"只把 `shadow` 改回 true"当回滚 ——
+那会同时留下两个消费者（新链投信 + 老链 tick），症状是她一次说两条。
 
 ---
 
@@ -406,5 +523,22 @@ Life / OpenLoop / **Wakeup** 三类，**没有为 Relationship 单独做 emitter
       **偏离**：没有单独的 Relationship emitter，理由与替代路径见上面 §Phase 5。
       **未做**：LLM 抽取 `open_loops`、`INTENTION_ACTIVATED` 的生产者、
       `enabled=true` 的端到端测试（与 Phase 2 的第 ③ 条前置条件同一条）。
-- [ ] Phase 6
+- [x] Phase 6 —— 旧链清理。**本阶段的结论是"切流之前不删老链"**, 理由逐条写死了:
+      老链今天是唯一真的在回话的那条路(`MessagePipeline` / `AgentRuntime.process()` /
+      `BehaviorTickJob` / 五个 `PersonDecision` 策略, 四处具体依赖见上面那张表)。
+      所以交付的是四件能做的事, 而不是一次大删除 ——
+      ① **切流演练** `V11CutoverTest`(5 条用例, 真库 + 真上下文, 换的是**配置**不是对象,
+      所以它检查的是"配置文件到行为"那条线, 而那条线上写错一个字母不会有任何报错);
+      ② 演练当场逮到的一个真缺陷: `DigitalHumanTestApplication` 手写 `@ComponentScan`
+      压掉了元注解上的 `TypeExcludeFilter`, 于是别的测试里嵌套的 `@TestConfiguration`
+      漏进了**所有** 31 个 `@SpringBootTest` 的上下文 —— 修法已写明, 安全性有证据
+      (全仓只有一个 `@TestConfiguration`, 且它自己的测试用 `@Import` 显式引入);
+      ③ 删掉四个零调用者的适配器(`CognitiveDecision.from*`) —— 它们的注释声称自己是
+      shadow 差异率的来源, 而那是**错的**: 真正的对照比的是"会不会写出一条消息出去",
+      不比决策名字; 同时**保留**同样零调用者但被另一个仓的契约 javadoc 点名的
+      `AttentionPolicies`;
+      ④ 删除清单(每一项带解锁条件) + 切流 runbook(含回滚), 其中三个老定时器的
+      对应关系**未核实**, 如实标出。
+      另: `V11RuntimeSwitch` 补了 `isEffective()` —— 四个开关横着读的地方不该有
+      "这一个是 isEnabled, 那三个是 isEffective" 这种记忆负担。
 - [ ] 全量测试 + 两仓部署 + 截图 + 全部 agent 关闭

@@ -911,8 +911,8 @@ public class AgentRuntime {
      * 而不是两个闹钟。用消息 id 会让她在一段对话里攒下一串到点时会一起响的闹钟。
      *
      * <h2>{@code needsWakeup()} 为真时只记日志</h2>
-     * 那个方法断言的是"押后类决策必须有复查时刻"。落了这条日志意味着<b>映射链有缺口</b>
-     * (最可能是 {@code CognitiveDecision.from(PersonDecision)} 在没有 now 时的那种退化),
+     * 那个方法断言的是"押后类决策必须有复查时刻"。落了这条日志意味着<b>决策链有缺口</b>
+     * (最可能是规划器给出了一个 follow-up 类的决策却没算出时刻),
      * 而不是运行期故障 —— 所以它不该混进 {@code cognitionRecorder.errors}:
      * 一个坏掉的 shadow 与一个如实报告"我还算不出这个时刻"的 shadow, 在切流判据上
      * 必须能分开。日志里那串 {@code 缺少复查时刻} 就是给人 grep 的。

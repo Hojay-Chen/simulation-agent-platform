@@ -49,6 +49,19 @@ public class V11RuntimeSwitch {
         return shadow;
     }
 
+    /**
+     * 是不是"让它真的发生"。
+     *
+     * <p>与 {@link #isEnabled()} 同一个值, 两个名字并存是刻意的: 本类与另外三个开关
+     * ({@code V11TurnsSwitch} / {@code V11CognitionSwitch} / {@code V11ProactiveSwitch})
+     * 一起被读的时候, 问的是同一件事 —— <b>"这一档会不会改变世界上发生的事"</b>。
+     * 缺了它, 读代码的人必须自己记住"这一个是 isEnabled, 那三个是 isEffective",
+     * 而切流演练那种要横着看四个开关的地方, 正是最不该有这种记忆负担的地方。
+     */
+    public boolean isEffective() {
+        return enabled;
+    }
+
     /** 要不要参与这件事。两个都关时连判定都不算。 */
     public boolean isActive() {
         return enabled || shadow;

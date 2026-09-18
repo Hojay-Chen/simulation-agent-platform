@@ -2008,6 +2008,13 @@ Old Message Pipeline
 
 已经没有核心职责后，再删除重复实现。
 
+> **实况（2026-09-18）：这个条件今天尚未满足，所以本期没有做那次删除。**
+> 四个开关全部处于 `enabled=false / shadow=true`（Cutover 还没发生），老链仍然是
+> **唯一真的在回话的那条路** —— `AgentRuntime.advanceMind` 还在读 `MessagePipeline`
+> 的注意力与 Brain 决策，`V11TurnSealJob` 还在走 `AgentRuntime.process()` 这个委托适配器，
+> `BehaviorTickJob` 还在 shadow 期让她开口。此时删除不是清理，是停机。
+> 逐项的**解锁条件**、切流 runbook 与回滚方式见 `V11-implementation-plan.md` 的 §Phase 6。
+
 ---
 
 # 34. 最终原则

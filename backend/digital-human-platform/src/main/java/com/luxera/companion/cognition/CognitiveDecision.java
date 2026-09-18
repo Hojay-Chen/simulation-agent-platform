@@ -1,9 +1,5 @@
 package com.luxera.companion.cognition;
 
-import com.luxera.companion.digitalhuman.decision.PersonDecision;
-import com.luxera.companion.runtime.agent.brain.BrainDecision;
-import com.luxera.companion.runtime.pipeline.MessagePipeline;
-
 import java.time.LocalDateTime;
 
 /**
@@ -56,94 +52,20 @@ public record CognitiveDecision(DecisionType type,
         return type.needsFollowUp() && nextWakeupAt == null;
     }
 
-    // ─────────────────────── 老链 → 新词表(单向) ───────────────────────
-
-    /**
-     * V10 的 {@code PipelineResult.Outcome} → 本类。
-     *
-     * <p>这个映射<b>有损</b>, 而且是刻意有损的: {@code IGNORE} 与 {@code IGNORE_NOT_NOTICED}
-     * 在老链里是两种结果, 在新词表里分别是 {@link DecisionType#OBSERVE}(看到了, 不介入)
-     * 与 {@link DecisionType#DO_NOTHING}(压根没看到)。它们看起来像同义词, 实际上
-     * 一个是"她无视了你", 一个是"她根本不知道" —— 这正是 V11 要把它俩分开的原因。
-     *
-     * <p>反过来(新 → 老)没有映射, 也不该有: 新词表里有 READ_MESSAGES / THINK /
-     * INITIATE_CONVERSATION 三个老链不存在的动作, 硬映射回去只能丢信息。
-     */
-    public static CognitiveDecision from(MessagePipeline.PipelineResult.Outcome outcome, String reason) {
-        if (outcome == null) {
-            return of(DecisionType.DO_NOTHING, reason == null ? "no_outcome" : reason);
-        }
-        return switch (outcome) {
-            case IGNORE_NOT_NOTICED -> of(DecisionType.DO_NOTHING,
-                    reason == null ? "not_noticed" : reason);
-            case IGNORE -> of(DecisionType.OBSERVE,
-                    reason == null ? "chose_not_to_engage" : reason);
-            case DEFERRED -> until(DecisionType.DEFER,
-                    reason == null ? "deferred" : reason, null);
-            case REPLY -> of(DecisionType.REPLY, reason == null ? "reply" : reason);
-        };
-    }
-
-    /**
-     * V10 的 {@code BrainDecision.action()} → 本类。
-     *
-     * <p>{@code CHECK_PHONE_FIRST} 映射成 {@link DecisionType#READ_MESSAGES}: 老链把它当
-     * "先打开手机再看一眼"的一个中间步骤, 而 V11 词表里"读"本身就是一个动作,
-     * 不再是一个需要二次决策的分支。
-     */
-    public static CognitiveDecision fromBrain(String action, String reason) {
-        if (action == null) {
-            return of(DecisionType.DO_NOTHING, "no_brain_decision");
-        }
-        return switch (action) {
-            case BrainDecision.REPLY, BrainDecision.SHORT_ACK, BrainDecision.END_CONVERSATION ->
-                    of(DecisionType.REPLY, reason == null ? "brain_" + action.toLowerCase() : reason);
-            case BrainDecision.CHECK_PHONE_FIRST -> of(DecisionType.READ_MESSAGES, "check_phone_first");
-            case BrainDecision.READ_NO_REPLY -> of(DecisionType.DEFER, "read_no_reply");
-            case BrainDecision.IGNORE -> of(DecisionType.OBSERVE, "brain_ignore");
-            default -> of(DecisionType.OBSERVE, "unknown_brain_action:" + action);
-        };
-    }
-
-    /**
-     * V10 的 sealed {@code PersonDecision} → 本类。
-     *
-     * <p>本工程是 JDK 17, 而 switch 的模式匹配在 17 上还是预览特性 —— 所以这里用
-     * {@code instanceof} 链。这不是风格选择: 用 switch 版本会要求全工程开
-     * {@code --enable-preview}, 而那会让 class 文件绑死在一个 JDK 小版本上。
-     *
-     * <p>只有 {@code DelayReplyDecision} 自带延迟分钟数, 所以只有它能算出一个真的复查时刻;
-     * 其余"待会儿再说"的老决策没有这个信息。{@code now} 为空时它退化成
-     * {@code needsWakeup()==true} —— 这是<b>诚实的信号</b>: 老链的 DEFER 到今天也没有
-     * 接进 V11 的唤醒系统(那是 Phase 5 的事), 与其编一个假时刻, 不如让它显形。
-     */
-    public static CognitiveDecision from(PersonDecision decision, LocalDateTime now) {
-        if (decision == null) {
-            return of(DecisionType.DO_NOTHING, "no_person_decision");
-        }
-        if (decision instanceof PersonDecision.IgnoreDecision d) {
-            return of(DecisionType.OBSERVE, d.reason());
-        }
-        if (decision instanceof PersonDecision.InspectDeviceDecision d) {
-            return of(DecisionType.READ_MESSAGES, d.reason());
-        }
-        if (decision instanceof PersonDecision.ReplyDecision d) {
-            return of(DecisionType.REPLY, d.reason());
-        }
-        if (decision instanceof PersonDecision.DelayReplyDecision d) {
-            return until(DecisionType.DEFER, d.reason(),
-                    now == null ? null : now.plusMinutes(d.delayMinutes()));
-        }
-        if (decision instanceof PersonDecision.ChangeActivityDecision d) {
-            return of(DecisionType.PERFORM_ACTION, d.reason());
-        }
-        // 走到这里说明 sealed 接口加了新实现而本适配器没跟上。不抛异常: 适配器是并跑期
-        // 的观察设施, 它自己炸掉会把被观察的那条主链一起带走。
-        return of(DecisionType.OBSERVE, "unmapped_person_decision:" + decision.getClass().getSimpleName());
-    }
-
-    /** 不带时刻的便捷重载(见 {@link #from(PersonDecision, LocalDateTime)} 对复查时刻的说明)。 */
-    public static CognitiveDecision from(PersonDecision decision) {
-        return from(decision, null);
-    }
+    // ─────────────────────── 为什么这里没有"老链 → 新词表"的适配器 ───────────────────────
+    //
+    // Phase 4 曾在这里放过四个单向适配器 —— from(Outcome, reason) / fromBrain(action, reason) /
+    // from(PersonDecision, now) / from(PersonDecision) —— Phase 6 把它们删了,
+    // 因为它们一次都没有被 src/main 里的任何代码调用过, 从头到尾只有它们自己的测试在用。
+    //
+    // 删掉不是因为"暂时用不上", 而是因为它们声称的那件事是错的: 注释写着
+    // "shadow 期的差异率靠它把老链的 Outcome 读成新词表算出来", 而真正的差异率在
+    // CognitionDecisionRecorder.classify —— 它比的是"会不会写一条消息出去"
+    // (DecisionType.producesOutboundMessage) 与老链这一次到底有没有发消息, 刻意不比决策名字。
+    // 这是两种对照里更结实的一种: 决策名是两套词表各自的方言, 拿方言对齐只会得到一张
+    // 永远需要维护的映射表; 而"她会不会开口"不需要翻译。
+    //
+    // 留着它们的代价很具体: 后来的人读到一个"并跑期观察设施"的注释, 会去找它在哪被用,
+    // 找不到, 只能怀疑自己看漏了。真需要按决策名对照时, 从 git 历史里取回即可 ——
+    // 那时它也会带着一个说真话的理由活过来。
 }

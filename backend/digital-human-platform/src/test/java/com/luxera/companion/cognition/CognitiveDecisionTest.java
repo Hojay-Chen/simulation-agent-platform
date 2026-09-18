@@ -1,8 +1,5 @@
 package com.luxera.companion.cognition;
 
-import com.luxera.companion.digitalhuman.decision.PersonDecision;
-import com.luxera.companion.runtime.agent.brain.BrainDecision;
-import com.luxera.companion.runtime.pipeline.MessagePipeline;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
@@ -12,11 +9,15 @@ import java.time.LocalDateTime;
 import static org.junit.jupiter.api.Assertions.*;
 
 /**
- * V11 §12.1 —— <b>一次认知的结论</b>, 以及"老链走向 → 新词表"的单向适配。
+ * V11 §12.1 —— <b>一次认知的结论</b>。
  *
- * <p>适配器这一段值得单独测, 因为它是 Phase 4 能并跑的前提: shadow 期的差异率
- * 就是靠它把老链的 {@code Outcome} 读成新词表算出来的。适配器错一格,
- * 差异率就整体偏掉, 而那个数字正是用来决定要不要切流的。
+ * <p>只测两件事: 构造时挡住的三件事, 以及"以后再说"类决策必须带复查时刻这条不变量。
+ *
+ * <p>这里原本还有一整节"老链 → 新词表"的适配器测试, Phase 6 随适配器一起删了。
+ * 那四个适配器没有任何 src/main 调用者, 而它们注释里声称的用途(shadow 期差异率)
+ * 实际由 {@code CognitionDecisionRecorder.classify} 用<b>行为</b>对照完成 ——
+ * 比的是"会不会写一条消息出去", 不经过词表映射。理由写全在
+ * {@code CognitiveDecision} 类文件的末尾。
  */
 class CognitiveDecisionTest {
 
@@ -58,89 +59,6 @@ class CognitiveDecisionTest {
             assertFalse(CognitiveDecision.until(DecisionType.DEFER, "x", T0.plusHours(1)).needsWakeup());
             assertFalse(CognitiveDecision.of(DecisionType.REPLY, "x").needsWakeup(),
                     "REPLY 不是 follow-up 类, 它不需要复查时刻");
-        }
-    }
-
-    // ─────────────────── 老链 → 新词表 ───────────────────
-
-    @Nested
-    @DisplayName("适配器: 老链的走向读成新词表(单向, 有损)")
-    class Adapters {
-
-        @Test
-        void theFourPipelineOutcomesMapToFourDifferentThings() {
-            assertEquals(DecisionType.DO_NOTHING,
-                    CognitiveDecision.from(MessagePipeline.PipelineResult.Outcome.IGNORE_NOT_NOTICED, null).type(),
-                    "IGNORE_NOT_NOTICED 是'她根本不知道'");
-            assertEquals(DecisionType.OBSERVE,
-                    CognitiveDecision.from(MessagePipeline.PipelineResult.Outcome.IGNORE, null).type(),
-                    "IGNORE 是'她知道, 选择不理' —— 这两个在老链里只差一个单词, 在新词表里是两件事");
-            assertEquals(DecisionType.DEFER,
-                    CognitiveDecision.from(MessagePipeline.PipelineResult.Outcome.DEFERRED, null).type());
-            assertEquals(DecisionType.REPLY,
-                    CognitiveDecision.from(MessagePipeline.PipelineResult.Outcome.REPLY, null).type());
-        }
-
-        @Test
-        void nullOutcomeDoesNotBlowUp() {
-            // 适配器是并跑期的观察设施: 它自己炸掉会把被观察的主链一起带走
-            assertDoesNotThrow(() -> CognitiveDecision.from((MessagePipeline.PipelineResult.Outcome) null, null));
-            assertEquals(DecisionType.DO_NOTHING,
-                    CognitiveDecision.from((MessagePipeline.PipelineResult.Outcome) null, null).type());
-        }
-
-        @Test
-        void brainActionsMapFaithfully() {
-            assertEquals(DecisionType.REPLY, CognitiveDecision.fromBrain(BrainDecision.REPLY, null).type());
-            assertEquals(DecisionType.REPLY, CognitiveDecision.fromBrain(BrainDecision.SHORT_ACK, null).type(),
-                    "一句'嗯'也是一条发出去的消息 —— 按'会不会写消息'分类时它必须算 REPLY");
-            assertEquals(DecisionType.READ_MESSAGES,
-                    CognitiveDecision.fromBrain(BrainDecision.CHECK_PHONE_FIRST, null).type(),
-                    "老链拿它当中间步骤, V11 词表里'读'本身就是一个动作");
-            assertEquals(DecisionType.DEFER, CognitiveDecision.fromBrain(BrainDecision.READ_NO_REPLY, null).type());
-            assertEquals(DecisionType.OBSERVE, CognitiveDecision.fromBrain(BrainDecision.IGNORE, null).type());
-        }
-
-        @Test
-        void anUnknownBrainActionBecomesObserveNotACrash() {
-            CognitiveDecision d = CognitiveDecision.fromBrain("SOMETHING_NEW", null);
-            assertEquals(DecisionType.OBSERVE, d.type());
-            assertTrue(d.reason().contains("SOMETHING_NEW"), "未知动作必须把原值带进理由, 否则无从查起");
-        }
-
-        @Test
-        void delayReplyKeepsItsDelay() {
-            var d = CognitiveDecision.from(new PersonDecision.DelayReplyDecision("在忙", 30), T0);
-            assertEquals(DecisionType.DEFER, d.type());
-            assertEquals(T0.plusMinutes(30), d.nextWakeupAt(),
-                    "老决策里唯一自带时长的那一个 —— 丢掉它等于把'30 分钟后回'变成'永远不回'");
-        }
-
-        @Test
-        void aDelayWithoutANowLeavesTheWakeupUnresolved() {
-            // 与其编一个假时刻, 不如让 needsWakeup() 显形: 老链的 DEFER 到今天也没有
-            // 接进 V11 的唤醒系统(Phase 5 的事)
-            var d = CognitiveDecision.from(new PersonDecision.DelayReplyDecision("在忙", 30));
-            assertTrue(d.needsWakeup());
-        }
-
-        @Test
-        void everySealedPersonDecisionIsMapped() {
-            // sealed 接口加了新实现而适配器没跟上时, 不能抛异常(那会带走主链),
-            // 但必须留一个能被看出来的痕迹
-            assertEquals(DecisionType.OBSERVE,
-                    CognitiveDecision.from(new PersonDecision.IgnoreDecision("x"), T0).type());
-            assertEquals(DecisionType.READ_MESSAGES,
-                    CognitiveDecision.from(new PersonDecision.InspectDeviceDecision("x"), T0).type());
-            assertEquals(DecisionType.REPLY,
-                    CognitiveDecision.from(new PersonDecision.ReplyDecision("x"), T0).type());
-            assertEquals(DecisionType.PERFORM_ACTION,
-                    CognitiveDecision.from(new PersonDecision.ChangeActivityDecision("x", "sleep"), T0).type());
-        }
-
-        @Test
-        void aNullPersonDecisionIsDoNothing() {
-            assertEquals(DecisionType.DO_NOTHING, CognitiveDecision.from((PersonDecision) null, T0).type());
         }
     }
 }
