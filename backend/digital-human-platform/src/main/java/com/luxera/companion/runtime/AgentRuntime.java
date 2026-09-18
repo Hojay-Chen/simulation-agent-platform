@@ -99,6 +99,10 @@ public class AgentRuntime {
     private final com.luxera.companion.digitalhuman.hotpath.V10HotpathGateway v10Hotpath;
     /** Agent 开关: "这一个 agent 现在要不要跑"。见 {@code AgentSwitchService} 的类注释。 */
     private final com.luxera.companion.persona.AgentSwitchService agentSwitch;
+    /** V11 §2.2.2: 送达主链(阶梯 → 判定 → 读)。默认 shadow, 只并跑记录。 */
+    private final com.luxera.companion.runtime.v11.V11DeliveryPath v11Path;
+    private final com.luxera.companion.runtime.v11.V11RuntimeSwitch v11Switch;
+    private final com.luxera.companion.runtime.v11.V11DeliveryShadow v11Shadow;
 
     // V10 §14/LAP: 应用动作的执行入口已迁出本类 —— 见 AgentApplicationFlow。
     // 认知链不再持有 ActionRuntime / LlmRouter / ObjectMapper: 它不认识任何应用,
@@ -122,7 +126,10 @@ public class AgentRuntime {
                           EventProcessingChain eventProcessingChain, EventRouter eventRouter,
                           ConversationOutputValidator outputValidator,
                           com.luxera.companion.digitalhuman.hotpath.V10HotpathGateway v10Hotpath,
-                          com.luxera.companion.persona.AgentSwitchService agentSwitch) {
+                          com.luxera.companion.persona.AgentSwitchService agentSwitch,
+                          com.luxera.companion.runtime.v11.V11DeliveryPath v11Path,
+                          com.luxera.companion.runtime.v11.V11RuntimeSwitch v11Switch,
+                          com.luxera.companion.runtime.v11.V11DeliveryShadow v11Shadow) {
         this.chatWorld = chatWorld;
         this.perceptionEngine = perceptionEngine;
         this.workingMemory = workingMemory;
@@ -150,6 +157,9 @@ public class AgentRuntime {
         this.outputValidator = outputValidator;
         this.v10Hotpath = v10Hotpath;
         this.agentSwitch = agentSwitch;
+        this.v11Path = v11Path;
+        this.v11Switch = v11Switch;
+        this.v11Shadow = v11Shadow;
     }
 
     /**
@@ -224,6 +234,18 @@ public class AgentRuntime {
     /**
      * V10 §9.2 事件路由终点: 消息送达事件 → 数字人"查看"消息(Simulator Capability)
      * → 进入完整认知链。消息内容始终通过 Simulator 读取, 不直接注入。
+     *
+     * <h2>V11 §2.2.2 在这里插入了什么</h2>
+     * 老链把"到达 = 读取 = 处理"三步并成了一步 —— 下面那三行 {@code chatWorld.messages(...)}
+     * 就是证据: 在问"她注意到了吗"之前, 整个会话的正文已经被拉进了这个进程。
+     *
+     * <p>V11 版本先只做判定({@link com.luxera.companion.runtime.v11.V11DeliveryPath#assess},
+     * 不读正文、不写库), 由判定决定要不要去读。默认
+     * ({@code app.v11.runtime.enabled=false, shadow=true}) 只<b>并跑并记录分歧</b>,
+     * 执行仍然走老链 —— 因为这是本轮唯一一处会让 53 个 agent 行为真的变化的地方,
+     * 它必须先在真实流量下被对比过, 而不是靠读代码觉得没问题。
+     *
+     * <p>老链那三行<b>一字未动</b>。开关关掉时, 本方法的行为与 V11 之前完全一致。
      */
     void onChatMessageDelivered(ExternalEvent event) {
         String companionId = event.personId();
@@ -233,6 +255,32 @@ public class AgentRuntime {
         List<String> messageIds = (List<String>) event.get("messageIds");
         if (conversationId == null || messageIds == null || messageIds.isEmpty()) return;
 
+        // ── V11 送达主链(默认 shadow: 只判定与记录, 不接管) ──
+        if (v11Path != null && v11Switch != null && v11Switch.isActive()) {
+            try {
+                LocalDateTime now = LocalDateTime.now();
+                var assessment = v11Path.assess(userId, companionId, conversationId,
+                        messageIds.size(), now);
+                if (v11Switch.isEnabled()) {
+                    if (v11Path.deliver(userId, companionId, conversationId, messageIds,
+                            assessment, now,
+                            msgs -> process(userId, companionId, conversationId, msgs))) {
+                        return;   // V11 已接管, 不再走老链
+                    }
+                } else {
+                    // shadow: 老链只要拿到正文就一定会处理, 所以它的"注意到"恒为 true。
+                    // readCount 传 -1 = 没尝试读(shadow 不读正文), 见 V11DeliveryShadow。
+                    v11Path.recordShadow(v11Shadow, companionId, messageIds.size(),
+                            assessment, -1, now);
+                }
+            } catch (Exception e) {
+                // 判定出问题绝不能让送达本身失败 —— 消息已经在库里了, 那是既成事实。
+                // 吞掉并继续走老链: 老链是今天真实在跑的那条路。
+                log.warn("[AgentRuntime] V11 送达判定异常(忽略, 继续老链): {}", e.getMessage());
+            }
+        }
+
+        // ── 老链(一字未动)──
         // 数字人"查看"整个会话, 再筛出这次送达的几条(顺序以会话内顺序为准)
         java.util.Set<String> wanted = new java.util.LinkedHashSet<>(messageIds);
         List<MessageView> messages = chatWorld.messages(conversationId).stream()
