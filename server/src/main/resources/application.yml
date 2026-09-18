@@ -135,6 +135,15 @@ app:
     # V11 回合封口检查(默认每秒) — 只做"入队", 不在调度线程上跑认知。
     # Spring 的 TaskScheduler 默认池大小是 1, 全部 @Scheduled 共用那根线程, 见 V11TurnSealJob
     turn-seal-cron: '*/1 * * * * *'
+    # V11 闹钟(默认每 10 秒) — 只做"查到点 + 投信 + 标记", 认知一个字都不跑
+    agent-wakeup-cron: '*/10 * * * * *'
+    # V11 闹钟历史清理(默认每日 04:40) — 扫的是无索引的 fired_at, 所以一天一次
+    agent-wakeup-purge-cron: '0 40 4 * * *'
+    agent-wakeup-retention-days: 7
+    # V11 补闹钟(默认每 5 分钟) — 保证每个可跑的 agent 手上都有一个"下一个时刻"
+    wakeup-rearm-cron: '0 */5 * * * *'
+    # V11 悬案到点(默认每 3 分钟) — 未完成事项的 expectedResolutionAt 刚过去的那些
+    open-loop-due-cron: '0 */3 * * * *'
 
   # 主动消息打断控制
   proactive:
@@ -176,3 +185,13 @@ app:
     cognition:
       enabled: false      # 回复与否由 CognitiveDecision 决定(不回复成为一个显式决策)
       shadow: true        # 算出决策并记录与老链的差异, 回复行为不变(默认)
+    # Phase 5: "她会不会先开口"(主动行为)
+    # 与前三个不同, 它有**两侧** —— 触发器投信 + 消费者拆信 —— 而两侧必须用同一个判断。
+    # 只发不收会把信攒在信箱里, 切流那天一起炸成几十条主动消息。见 V11ProactiveSwitch。
+    # 另注: shadow 期它确实会写 agent_schedule(她自己的时钟), 但绝不写世界(消息/关系/活动)。
+    proactive:
+      enabled: false            # 消费者让"她本来会做的事"真的发生
+      shadow: true              # 投信 + 算她会做什么并记账, 不动手(默认)
+      rearm-minutes: 30         # 她两次醒来之间的基准间隔(她的"呼吸频率")
+      rearm-jitter: 0.25        # 间隔抖动(±25%), 免得 53 个 agent 同一秒一起醒
+      open-loop-lookback-days: 7  # 悬案到点往回看多久 —— 再久就不是关心了

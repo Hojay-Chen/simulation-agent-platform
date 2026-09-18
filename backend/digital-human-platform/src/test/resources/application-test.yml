@@ -49,6 +49,13 @@ app:
     # V11 信箱维护(回收租约/重放/过期清理)。测试里必须钉死: 它会真的重放 PENDING 行,
     # 于是"暂停中的 agent 一条都不处理"这条用例会被后台任务替它处理掉, 断时红时绿。
     inbox-maintenance-cron: 0 0 0 1 1 *
+    # V11 Phase 5 的四个调度。前两个必须钉死是同一类理由(它们会真的写 agent_inbox);
+    # 后两个即使 proactive 全关也进不去(第一行就 return), 照样钉死 —— 免得将来有人
+    # 只把开关打开一半(比如 shadow=true)做实验时, 忘了这四个 cron 已经在跑。
+    agent-wakeup-cron: 0 0 0 1 1 *
+    agent-wakeup-purge-cron: 0 0 0 1 1 *
+    wakeup-rearm-cron: 0 0 0 1 1 *
+    open-loop-due-cron: 0 0 0 1 1 *
 
   # V10 §5 测试环境关闭拟人化层(单测断言预期原始输出, 不带错字/犹豫后缀)
   v10:
@@ -83,5 +90,12 @@ app:
     # 去重器 —— 对绝大多数用例那是无关的一次计算, 但对"断言某条链上发生了哪些交互"的
     # 用例它就是一条多余的交互。要测决策的用例自己构造 planner/recorder, 不走配置。
     cognition:
+      enabled: false
+      shadow: false
+    # Phase 5 同理钉死, 而且这里比前三个更要紧: proactive.shadow 生产默认 true, 一旦继承,
+    # 每个测试上下文里 LifeScheduleJob / OpenLoopDueJob / WakeupRearmJob 都会真的往
+    # agent_inbox 里投信, 而"某个用例断言信箱是空的/暂停的 agent 一条都不处理"会被
+    # 这些后台投递搅成偶发红。要测主动行为的用例自己构造 mailbox/engine, 不走配置。
+    proactive:
       enabled: false
       shadow: false

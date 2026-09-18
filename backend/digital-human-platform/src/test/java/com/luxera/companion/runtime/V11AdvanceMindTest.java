@@ -49,8 +49,11 @@ import org.mockito.Spy;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
+import com.luxera.companion.wakeup.AgentWakeupService;
+import com.luxera.companion.world.AgentEventType;
 import org.springframework.test.util.ReflectionTestUtils;
 
+import java.time.LocalDateTime;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -120,6 +123,11 @@ class V11AdvanceMindTest {
     @Mock private AgentSwitchService agentSwitch;
     @Mock private MindStateService mindStates;
     @Mock private CognitionDecisionRecorder recorder;
+    /**
+     * Phase 5 加的。它是认知链<b>唯一</b>的外部副作用出口 —— 断言它, 就是断言
+     * "她决定押后"这件事没有停在内存里, 而是变成了一行会有执行者的闹钟。
+     */
+    @Mock private AgentWakeupService wakeups;
 
     /** 真的: 本文件要测的正是决策与拦截之间那条接缝 */
     private final PersonActorRegistry personActorRegistry = new PersonActorRegistry();
@@ -141,7 +149,7 @@ class V11AdvanceMindTest {
                 wakeup, intentionService, schedule, companionRuntime,
                 cognitiveSessionService, realityChecker, stateVersionGate, personActorRegistry,
                 realityLedger, null, null, outputValidator, null, agentSwitch,
-                null, null, null, mindStates, planner, cognitionSwitch, recorder, guard);
+                null, null, null, mindStates, planner, cognitionSwitch, recorder, guard, wakeups);
 
         when(agentSwitch.isRunnable(AGENT)).thenReturn(true);
         when(perceptionEngine.perceive(anyString()))
@@ -405,6 +413,90 @@ class V11AdvanceMindTest {
             verify(chatWorld, never()).append(any());
             verify(intentionService).create(eq(AGENT), eq(USER), anyString(), anyDouble(),
                     anyString(), anyString(), any(), anyInt());
+        }
+    }
+
+    // ─────────────────────────── Phase 5: 押后必须有人捡回来 ───────────────────────────
+
+    /**
+     * 这一组的核心是一句话: <b>一个没有执行者的"待会儿"等于永远不回</b>。
+     *
+     * <p>Phase 4 让 DEFER 成了一个真实的决策; 但直到这里之前, 那个决策除了在账本上
+     * 记一笔之外什么也没发生 —— 老链的 DEFER 就是这个下场。Phase 5 给它的执行者
+     * 是一行 {@code agent_schedule}: 到点之后会有一封信投进她的信箱,
+     * 而信拆开之后她重新面对这条会话。
+     */
+    @Nested
+    @DisplayName("Phase 5: 押后 → 排一个闹钟 (否则'待会儿'没有执行者)")
+    class WakeupScheduling {
+
+        @Test
+        void deferSchedulesAnAlarmAtTheDecisionsOwnReviewTime() {
+            pipelineSays(MessagePipeline.PipelineResult.Outcome.REPLY, 0.9, 0.9);
+            wakes(CognitiveWakeupService.WakeLevel.ATTENTION);
+            available(CompanionAvailability.BUSY);   // planner 会说 DEFER(60 分钟后)
+
+            run();
+
+            verify(wakeups).schedule(eq(AGENT), any(LocalDateTime.class),
+                    eq(AgentEventType.SCHEDULED_WAKEUP),
+                    // 来源键锚在<b>会话</b>上: 同一段对话里押后两次是"改主意",
+                    // 用消息 id 会攒出一串到点一起响的闹钟
+                    eq(AgentWakeupService.key(AgentWakeupService.SRC_DECISION, CONV)),
+                    contains("busy"));
+        }
+
+        @Test
+        void replySchedulesNothing() {
+            // 回了就了结了 —— 一个 REPLY 还要排闹钟的话, 她会过一小时又想起来回一次
+            pipelineSays(MessagePipeline.PipelineResult.Outcome.REPLY, 0.9, 0.9);
+            wakes(CognitiveWakeupService.WakeLevel.DELIBERATION);
+            available(CompanionAvailability.AVAILABLE);
+            replyPathWorks();
+
+            run();
+
+            verify(chatWorld).append(any());
+            verifyNoInteractions(wakeups);
+        }
+
+        @Test
+        void bothSwitchesOffTouchesNothing() {
+            ReflectionTestUtils.setField(cognitionSwitch, "enabled", false);
+            ReflectionTestUtils.setField(cognitionSwitch, "shadow", false);
+            pipelineSays(MessagePipeline.PipelineResult.Outcome.REPLY, 0.9, 0.9);
+            wakes(CognitiveWakeupService.WakeLevel.ATTENTION);
+            available(CompanionAvailability.BUSY);
+            replyPathWorks();   // 开关全关时老链是唯一在回话的那条路, 它会一路走到发消息
+
+            run();
+
+            // 连算都不算(decideInMind 在第一行就返回 null), 于是也不会有闹钟
+            verifyNoInteractions(wakeups);
+        }
+
+        @Test
+        void shadowAlsoSchedulesBecauseTheAlarmIsHerClockNotTheWorld() {
+            // 这一条是<b>有意</b>的, 写下来免得后来者以为它是漏网之鱼:
+            // shadow 不许写世界(消息/关系/活动/通知), 但允许写她自己的时钟与账本 ——
+            // 一行闹钟只会产出一封由 shadow 消费者拆开、只记一笔的信, 对方看不出差别。
+            // 不排的话, 切流那天这条接线就是第一次被执行, 而"第一次执行"永远是最危险的时刻。
+            ReflectionTestUtils.setField(cognitionSwitch, "enabled", false);
+            ReflectionTestUtils.setField(cognitionSwitch, "shadow", true);
+            pipelineSays(MessagePipeline.PipelineResult.Outcome.REPLY, 0.9, 0.9);
+            wakes(CognitiveWakeupService.WakeLevel.ATTENTION);
+            available(CompanionAvailability.BUSY);
+            replyPathWorks();   // shadow 期老链继续跑, 回话的仍然是它
+
+            run();
+
+            verify(wakeups).schedule(eq(AGENT), any(LocalDateTime.class),
+                    eq(AgentEventType.SCHEDULED_WAKEUP), anyString(), anyString());
+            // 世界的分界线画在"V11 的决策有没有落到世界里": DEFER 那一笔(已读 + 状态事件 +
+            // 现实账本)只由 applyNonReplyDecision 写, 而它只在 enabled 时被调用。
+            // 闹钟是唯一被允许的例外 —— 因为它不是世界, 是她自己的时钟。
+            verify(chatWorld, never()).publishEvent(eq(AGENT), eq(ChatEventTypes.USER_MESSAGE_STATUS),
+                    argThat(m -> "V11_DEFER".equals(m.get("action"))));
         }
     }
 }

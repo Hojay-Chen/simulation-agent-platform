@@ -91,21 +91,46 @@ public class BehaviorEngine {
         this.planService = planService;
     }
 
-    /** 对所有伴侣做一次行为评估(行为 Tick) */
+    /**
+     * 对所有伴侣做一次行为评估(行为 Tick) —— 全世界推一次, 老链的定时入口。
+     *
+     * <p>返回值是每个 agent 的结果, 而不是 {@code void}: V11 Phase 5 的 dual run 需要
+     * 把"老链这一轮真的做了什么"与"新链算出来她会做什么"逐条对上。没有返回值的话,
+     * shadow 只能记新链那一半, 而"差异"这个词需要两边都存在。
+     */
     @Transactional
-    public void evaluateAll(LocalDateTime now) {
+    public List<BehaviorOutcome> evaluateAll(LocalDateTime now) {
+        List<BehaviorOutcome> outcomes = new ArrayList<>();
         for (Companion c : companionRepo.findRunnable()) {
             if (c.getDeletedAt() != null) continue;
             try {
-                // §三十九: 关系维护压力随沉默上升(驱动主动联系候选)
-                if (c.getUserId() != null) {
-                    relationshipService.decayConnectionPressure(c.getUserId(), c.getId(), now);
+                prepare(c.getId(), now);
+                BehaviorOutcome outcome = evaluate(c, now, "TIME_TICK");
+                if (outcome != null) {
+                    outcomes.add(outcome);
                 }
-                evaluate(c, now, "TIME_TICK");
             } catch (Exception e) {
                 log.debug("[BehaviorEngine] {} 评估失败: {}", c.getId(), e.getMessage());
             }
         }
+        return outcomes;
+    }
+
+    /**
+     * 世界往前走带来的那些<b>事实更新</b> —— 与"她做什么"无关, 所以归触发器做, 不归消费者。
+     *
+     * <p>抽出来的理由很具体: V11 切流之后 {@code evaluateAll} 不再被调用, 而
+     * §三十九 的关系维护压力如果跟着它一起消失, 后果是"沉默越久越想联系"这条规则
+     * 静默失效 —— 不报错, 只表现为她再也不主动找人。这种故障靠读代码很难发现,
+     * 所以把它单独提成一个名字, 让"切流时漏掉了什么"变成一次可以逐行对照的检查。
+     */
+    @Transactional
+    public void prepare(String companionId, LocalDateTime now) {
+        Companion c = companionRepo.findById(companionId).orElse(null);
+        if (c == null || c.getUserId() == null) {
+            return;
+        }
+        relationshipService.decayConnectionPressure(c.getUserId(), companionId, now);
     }
 
     /** 对单个伴侣做行为评估并执行选中的行为 */
@@ -116,8 +141,52 @@ public class BehaviorEngine {
         return evaluate(c, now, reason);
     }
 
+    /**
+     * 评估并执行 —— 这是"她真的动了"。V11 的消费者在 {@code enabled} 档调它。
+     */
     @Transactional
     public BehaviorOutcome evaluate(Companion c, LocalDateTime now, String reason) {
+        BehaviorCandidate selected = select(c, now);
+        if (selected == null) {
+            return null;
+        }
+        return execute(c, selected, now, reason);
+    }
+
+    /** 按 id 评估并执行。 */
+    @Transactional
+    public BehaviorOutcome evaluateById(String companionId, LocalDateTime now, String reason) {
+        Companion c = companionRepo.findById(companionId).orElse(null);
+        return c == null ? null : evaluate(c, now, reason);
+    }
+
+    /**
+     * <b>只选, 不做</b> —— V11 §25.2 的 shadow 期要的就是这一半。
+     *
+     * <p>抽出来的原因不是"代码好看", 而是一个 shadow 期必须回答的问题:
+     * <b>"她本来会做什么"</b>。原来的 {@code evaluate} 边选边做, 所以想观察它就必然
+     * 会改变世界 —— 于是"观察"这个词在本类上原本是不成立的。拆开之后:
+     * <pre>
+     *   shadow   → select()  算出一个候选, 记一笔, 到此为止
+     *   enabled  → evaluate() 选出来并让它发生
+     * </pre>
+     * 两者的<b>选择逻辑是同一条</b>(同一个方法), 所以 shadow 记录下来的东西与切流后
+     * 真的会发生的事情是同一个答案 —— 这正是一个 shadow 唯一有用的性质。
+     *
+     * <p>注意 {@code select} 只读不写: 步骤 1 的状态收集里都是读
+     * (睡意、关系、手机状态都是"现在是什么样"), 唯一的例外是
+     * {@code sleepModel.sleepPropensity} 这类会推进模型的调用 —— 它们与
+     * {@code BehaviorTickJob} 今天在干的事一模一样, 所以不引入新的副作用。
+     */
+    @Transactional
+    public BehaviorCandidate select(String companionId, LocalDateTime now) {
+        Companion c = companionRepo.findById(companionId).orElse(null);
+        return c == null ? null : select(c, now);
+    }
+
+    /** 生成候选、打分、选一个。不执行。 */
+    @Transactional
+    public BehaviorCandidate select(Companion c, LocalDateTime now) {
         String companionId = c.getId();
         String userId = c.getUserId();
 
@@ -216,11 +285,7 @@ public class BehaviorEngine {
         }
 
         // ── 4. 概率化选择(轮盘赌 + 温度) ────────────
-        BehaviorCandidate selected = stochasticSelect(candidates);
-
-        // ── 5. 约束校验 + 执行 ───────────────────────
-        BehaviorOutcome decision = execute(c, selected, now, reason);
-        return decision;
+        return stochasticSelect(candidates);
     }
 
     /** 执行选中的行为 */

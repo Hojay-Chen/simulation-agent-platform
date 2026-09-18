@@ -278,6 +278,69 @@ Service 要，与 `AgentSnapshotService` 同源），不是这条记录。理由
 `wakeup/AgentWakeup` + `agent_schedule`（下次唤醒时刻）；
 Life / OpenLoop / Relationship 三类触发器产出**事件**（不是直接聊天）。
 
+#### 交付的形状
+
+八件东西，一条自持的闭环：
+
+| 类 | 角色 |
+|---|---|
+| `wakeup/AgentWakeup`（表 `agent_schedule`）+ `AgentWakeupService` | 她下次醒来的时刻，一行一个 |
+| `wakeup/AgentWakeupJob`（10s） | 到点的闹钟 → 信箱。**只投信，不跑认知** |
+| `wakeup/WakeupRearmJob`（5min） | 每个活着的 agent 手上必须一直有一个时刻 |
+| `digitalhuman/life/LifeScheduleJob` | 生活事件：世界那一半同步，她那一半投信 |
+| `openloop/OpenLoopDueJob`（3min） | 悬着的事到点了 → 一封信 |
+| `proactive/ProactiveActionConsumer` | 仓库里**第一个真的消费者**：拆信 → 问行为引擎 |
+| `runtime/v11/ProactiveActionRecorder` | 主动行为的对照账本（与认知那本分开） |
+| `runtime/AgentRuntime.scheduleWakeup` | 把 DEFER 的 `nextWakeupAt` 变成下一行闹钟 |
+
+闭环：`WakeupRearmJob` 保证每人一个闹钟 → `AgentWakeupJob` 到点投信 →
+`ProactiveActionConsumer` 拆信问引擎 → 引擎可能押后 → `AgentRuntime` 排下一个闹钟。
+**她不再依赖任何全局 cron 被"推进"** —— "她是活的"从一句声明变成了一条能自持的电路。
+
+#### 三处由测试逼出来的语义
+
+1. **幂等键在两个方向上正好相反。** 闹钟那一路是 `行id@这次响的时刻`：只用 `sourceKey`
+   会在她改主意推后时被当成重复，只用行 id 会在复活同一行之后让第二次以后的响全部静默丢失
+   —— 两种写法都表现为"她第一次没回，之后那个闹钟就再也没响过"，没有异常、没有日志。
+   生活事件那一路**故意**只用 `scheduleId`：一个排程项对应一次生活变化，`markDone` 写库失败
+   时下一轮重走，第二封**必须**被认出来，否则她经历两次"活动结束了"。
+2. **世界那一半不许变成信。** 活动结束/计划激活照旧同步执行：它是事实，会被作息、可用性、
+   注意力读到；改成投信之后她一旦在睡觉，活动就永远不会结束。分裂点是"事实"与"她的反应"，
+   不是"重要的"与"不重要的"。
+3. **`enabled=true` 时老链的 tick 必须停。** 不停的话她的一次主动行为会被两条链各执行一次
+   ——重复发言。而那在外部看起来与"她心情很好"一模一样，不会被当成故障报上来。
+   所以 `BehaviorTickJob` 的分叉不是效率优化，是切流的正确性条件（Phase 6 连同本类一起删）。
+
+#### 一处与本文档原设计的偏离（有意，记录在案）
+
+原文写的是"Life / OpenLoop / **Relationship** 三类触发器产出事件"。实际交付的是
+Life / OpenLoop / **Wakeup** 三类，**没有为 Relationship 单独做 emitter**。理由：
+
+`connectionPressure` 在两次交互之间是**单调不减**的（由 `lastInteractionAt` 与"沉默了多久"
+算出）。"压力高就投一封信"这把触发器于是会在每个扫描周期都成立 —— 一个压力驱动的 emitter
+会变成一台复读机，而它的症状只是"她最近特别黏人"，不会被当成故障。
+
+关系压力今天仍然到达她的决策，路径是：`WakeupRearmJob` 对每个 runnable agent 调
+`BehaviorEngine.prepare`（§三十九 的关系维护推进，原来寄生在老链 tick 里 —— 切流后那一步
+必须有人接住，漏掉它的症状是"她再也不主动找人"）→ `BehaviorEngine.select` 读
+`connectionPressure` 作为一项权重。**节奏旋钮是 `app.v11.proactive.rearm-minutes`（默认 30
+分钟）**，不是一个新的触发器。`RELATIONSHIP_CHANGED` 事件类型与消费者支持都留着，
+等有了真正的"关系突变"生产者在别处接上。
+
+#### 本阶段未做（如实记录，不留含糊）
+
+- **用 LLM 抽取 `open_loops`**（§0.1 把这件事指到了 Phase 5）**没有落地**。
+  `OpenLoopDueJob` 只消费既有 `open_loops` 行，不问"这条对话里有没有一件悬着的事"。
+- **`INTENTION_ACTIVATED` 有类型、消费者也认它，但没有生产者。** 今天投出去的事件只有
+  Life / OpenLoop / Wakeup 三族。
+- **重启丢掉的在途消息**（Phase 3 的"刻意不持久化"）只是被闹钟**间接**兜住 ——
+  她会在下一次醒来时重新面对那条会话，而不是有一个显式的"读未回复消息"动作。
+- **老链那条 `pipelineResult.isDeferred()` 分支仍然不排闹钟**（`advanceMind` 第 562 行）。
+  它今天不需要排：`enabled=true` 时 V11 决策接管"回不回"，那个分支根本不执行。
+  也就是说这个缺口**在切流那一刻自动闭合**，而 `enabled=false` 时它是老链原来的行为、
+  不该被 Phase 5 改动。写在这里是因为"DEFER 没有执行者"这句话在 Phase 4 的注释里
+  仍然字面成立 —— 它成立的范围是"shadow 期的老链"，不是 V11 的决策。
+
 ### Phase 6：旧链清理
 
 旧 `MessagePipeline` 无核心职责后再删。保留 adapter 的地方写清为什么保留。
@@ -331,6 +394,17 @@ Life / OpenLoop / Relationship 三类触发器产出**事件**（不是直接聊
       切流判据是 `wouldSilence`（老链会回、新决策不回），与 `wouldSpeak`、`errors`
       **分开计数** —— 一个坏掉的 shadow 会表现为"差异率 0%，可以切流了"。
       **未做**：`enabled=true` 的端到端测试（与 Phase 2 的第 ③ 条前置条件同一条）。
-- [ ] Phase 5
+- [x] Phase 5 —— 主动行为。交付 8 个类 + 80 条用例；默认
+      `app.v11.proactive.enabled=false / shadow=true`（新链投信、消费者只记账不动手，
+      老链 tick 照跑并记进对照账本 —— shadow 期**老链必须继续跑**，否则"对照"没有第二边，
+      那会是一次开关看起来还关着的静默切流）。
+      三条触发器（Life / OpenLoop / Wakeup）全部产出**事件**而不是直接聊天，
+      仓库里第一次有了真的 `AgentInboxConsumer`：在那之前投出去的信没有收信人。
+      确认了 `ProactiveActionConsumer` **刻意不碰阶梯事件**（`USER_MESSAGE_*` 仍然零消费者）
+      —— 加一个上去会让同一条消息被处理两次，而"她偶尔回你两条"没人会当故障报上来；
+      有一条用例遍历 `AgentEventType.values()` 把这个留白钉住。
+      **偏离**：没有单独的 Relationship emitter，理由与替代路径见上面 §Phase 5。
+      **未做**：LLM 抽取 `open_loops`、`INTENTION_ACTIVATED` 的生产者、
+      `enabled=true` 的端到端测试（与 Phase 2 的第 ③ 条前置条件同一条）。
 - [ ] Phase 6
 - [ ] 全量测试 + 两仓部署 + 截图 + 全部 agent 关闭

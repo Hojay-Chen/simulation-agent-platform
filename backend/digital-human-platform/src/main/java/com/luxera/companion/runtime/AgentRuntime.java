@@ -112,6 +112,17 @@ public class AgentRuntime {
     private final com.luxera.companion.runtime.v11.CognitionDecisionRecorder cognitionRecorder;
     private final com.luxera.companion.cognition.ResponseContinuityGuard continuityGuard;
 
+    // ── V11 Phase 5: 她的下次唤醒时刻(agent_schedule) ──
+    /**
+     * 只有一件事: 把一个 {@code nextWakeupAt} 变成一行闹钟。
+     *
+     * <p>它是 {@code cognitive/} 与 {@code wakeup/} 之间唯一的接线 —— 认知只产出
+     * "什么时候该重新考虑", 不产生任何计时行为; 闹钟怎么响、谁来拆信是
+     * {@code AgentWakeupJob} 与消费者的事。这条分界让 Phase 4 那句
+     * "<em>一个没有复查时刻的 DEFER 与'永远不回'是同一件事</em>" 第一次有了执行者。
+     */
+    private final com.luxera.companion.wakeup.AgentWakeupService wakeups;
+
     // V10 §14/LAP: 应用动作的执行入口已迁出本类 —— 见 AgentApplicationFlow。
     // 认知链不再持有 ActionRuntime / LlmRouter / ObjectMapper: 它不认识任何应用,
     // 也就不该有"读局面/评估/落子"这类需要的工具。
@@ -142,7 +153,8 @@ public class AgentRuntime {
                           com.luxera.companion.cognition.MindDecisionPlanner mindPlanner,
                           com.luxera.companion.runtime.v11.V11CognitionSwitch cognitionSwitch,
                           com.luxera.companion.runtime.v11.CognitionDecisionRecorder cognitionRecorder,
-                          com.luxera.companion.cognition.ResponseContinuityGuard continuityGuard) {
+                          com.luxera.companion.cognition.ResponseContinuityGuard continuityGuard,
+                          com.luxera.companion.wakeup.AgentWakeupService wakeups) {
         this.chatWorld = chatWorld;
         this.perceptionEngine = perceptionEngine;
         this.workingMemory = workingMemory;
@@ -178,6 +190,7 @@ public class AgentRuntime {
         this.cognitionSwitch = cognitionSwitch;
         this.cognitionRecorder = cognitionRecorder;
         this.continuityGuard = continuityGuard;
+        this.wakeups = wakeups;
     }
 
     /**
@@ -867,6 +880,13 @@ public class AgentRuntime {
         cognitionRecorder.record(decision, pipelineResult.shouldReply(),
                 String.valueOf(pipelineResult.outcome()));
 
+        // V11 Phase 5: 把"什么时候重新考虑"变成一行闹钟。
+        //
+        // 放在这里、而不是放在 applyNonReplyDecision 里: 那是"她决定不做这件事"的执行处,
+        // 而排闹钟对 REPLY 也可能是对的(她决定先回一句, 但还有件事要等)。决策是唯一的输入,
+        // 所以接线点也只有一个。
+        scheduleWakeup(companionId, conversationId, decision, now);
+
         if (cognitionSwitch.isEnabled()) {
             return decision;
         }
@@ -875,6 +895,54 @@ public class AgentRuntime {
         log.debug("[AgentRuntime] {} cognition shadow: planned={} old={} (不影响行为)",
                 companionId, decision.type(), pipelineResult.outcome());
         return null;
+    }
+
+    /**
+     * V11 Phase 5 —— <b>把一个决策的复查时刻落成一行闹钟</b>。
+     *
+     * <h2>为什么这件事必须在这里发生, 而不是"到点再看"</h2>
+     * DEFER 的危险不在于它推迟了回复, 而在于<b>它没有任何人负责把它捡回来</b>。
+     * 老链的 DEFER 就是这样的: 一个"待会儿回"的决定, 待会儿永远不会来。
+     * 所以这里做的不是优化, 而是让那句"待会儿"有一个具体的时刻与一个具体的执行者。
+     *
+     * <h2>来源键用会话 id</h2>
+     * 她"在等这个会话", 不是"在等这一条消息": 同一个会话里押后两次、第二次改了时刻,
+     * 那是同一个闹钟被推后(见 {@code AgentWakeupService.schedule} 的语义),
+     * 而不是两个闹钟。用消息 id 会让她在一段对话里攒下一串到点时会一起响的闹钟。
+     *
+     * <h2>{@code needsWakeup()} 为真时只记日志</h2>
+     * 那个方法断言的是"押后类决策必须有复查时刻"。落了这条日志意味着<b>映射链有缺口</b>
+     * (最可能是 {@code CognitiveDecision.from(PersonDecision)} 在没有 now 时的那种退化),
+     * 而不是运行期故障 —— 所以它不该混进 {@code cognitionRecorder.errors}:
+     * 一个坏掉的 shadow 与一个如实报告"我还算不出这个时刻"的 shadow, 在切流判据上
+     * 必须能分开。日志里那串 {@code 缺少复查时刻} 就是给人 grep 的。
+     */
+    private void scheduleWakeup(String companionId, String conversationId,
+                                com.luxera.companion.cognition.CognitiveDecision decision,
+                                LocalDateTime now) {
+        if (wakeups == null || cognitionSwitch == null || !cognitionSwitch.isActive()) {
+            return;
+        }
+        if (decision.needsWakeup()) {
+            log.warn("[V11] {} 决策 {} 缺少复查时刻(理由 {}), 这个'待会儿'没有执行者",
+                    companionId, decision.type(), decision.reason());
+            return;
+        }
+        if (decision.nextWakeupAt() == null) {
+            return;
+        }
+        String source = conversationId != null && !conversationId.isBlank()
+                ? conversationId : companionId;
+        try {
+            wakeups.schedule(companionId, decision.nextWakeupAt(),
+                    com.luxera.companion.world.AgentEventType.SCHEDULED_WAKEUP,
+                    com.luxera.companion.wakeup.AgentWakeupService.key(
+                            com.luxera.companion.wakeup.AgentWakeupService.SRC_DECISION, source),
+                    "决策复查: " + decision.reason());
+        } catch (Exception e) {
+            // 排不上闹钟不能让这条已经算出来的回复作废 —— 那会用一个副作用去否决主链。
+            log.warn("[AgentRuntime] {} 排闹钟失败(忽略): {}", companionId, e.getMessage());
+        }
     }
 
     /**
