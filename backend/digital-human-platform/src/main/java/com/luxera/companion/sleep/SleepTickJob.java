@@ -40,7 +40,7 @@ public class SleepTickJob {
     @Transactional
     public void run() {
         LocalDateTime now = LocalDateTime.now();
-        for (Companion c : companionRepository.findAll()) {
+        for (Companion c : companionRepository.findRunnable()) {
             if (c.getDeletedAt() != null) continue;
             try {
                 sleepModel.tick(c.getId(), now);

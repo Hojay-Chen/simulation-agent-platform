@@ -69,6 +69,33 @@ function Body() {
             />
           </div>
 
+          {/*
+            停止的那一档单独一行, 而不是挤进上面那四个数里 —— 上面四个回答"建得怎么样",
+            这一个回答"现在花不花钱", 是两个问题。agent 是持续运转的: 没人说话时定时任务
+            照样在推进它们的一生, 所以"有几个还开着"值得一眼看见。
+          */}
+          <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+            <Stat
+              label="正在运行"
+              value={summary.total - summary.paused}
+              hint={summary.total > 0 ? '持续运转, 会调用模型' : '还没有 agent'}
+            />
+            <Stat
+              label="已停止"
+              value={summary.paused}
+              hint={summary.paused > 0 ? '不推进、不调模型, 记忆都在' : '没有停着的'}
+            />
+            {summary.paused > 0 && (
+              <div className="col-span-2 flex items-center rounded-xl border border-line bg-raised px-4 py-3">
+                <p className="text-xs leading-relaxed text-ink-faint">
+                  停止<b>不删除任何东西</b> —— 继续之后从停下的那一刻接着走。
+                  到 <Link to="/agents" className="text-accent hover:underline">Agents</Link> 页单独开关,
+                  或在那一页用「全部停止」。
+                </p>
+              </div>
+            )}
+          </div>
+
           <div className="grid gap-5 lg:grid-cols-2">
             <Panel title="关系阶段分布">
               {summary.stages.length === 0

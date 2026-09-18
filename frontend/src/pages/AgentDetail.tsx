@@ -1,11 +1,12 @@
 import { useEffect, useState, type ReactNode } from 'react'
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
-import { ArrowLeft, RefreshCw, Search, Trash2 } from 'lucide-react'
+import { ArrowLeft, Pause, Play, RefreshCw, Search, Trash2 } from 'lucide-react'
 import {
   ApiError,
   getCompanion,
   listMemories,
   searchMemories,
+  setAgentLifecycle,
   updatePersona,
   deleteAgent,
   type Companion,
@@ -17,7 +18,7 @@ import { AGENT_TABS, COMPONENT_TABS, distinctTypes, sectionsOf, tabOf } from '@/
 import { RecordView } from '@/components/RecordView'
 import { Section, describeError } from '@/components/Section'
 import { RequireStudio } from '@/components/StudioLogin'
-import { Button, Empty, ErrorNote, Field, Panel, inputClass } from '@/components/ui'
+import { Button, Chip, Empty, ErrorNote, Field, Panel, inputClass } from '@/components/ui'
 
 /**
  * agent 详情 —— §19.2 的八个标签页。
@@ -49,6 +50,8 @@ function Body() {
   const navigate = useNavigate()
   const [params, setParams] = useSearchParams()
   const tab = tabOf(params.get('tab'))
+  const [switching, setSwitching] = useState(false)
+  const [switchError, setSwitchError] = useState<string | null>(null)
   // 删掉之后**回列表**, 不留在原地刷新: 那一刷会去打一个刚被软删的 id, 页面要么
   // 报错要么显示一份已经不存在的档案 —— 两种都不如实说"它没了, 我们回列表吧"。
   const backToList = () => navigate('/agents', { replace: true })
@@ -64,6 +67,31 @@ function Body() {
     setParams(p, { replace: true })
   }
 
+  /*
+   * 开关放在**页头**, 不在某一个标签页里: "这个 agent 现在停着" 是看任何一页都该知道的事。
+   * 把它塞进「总览」意味着用户在「记忆」页找一条不存在的记忆时, 没有任何线索告诉他
+   * 原因是他上周把它关了。
+   *
+   * 切换之后**重取**而不是就地改: 页头显示的这一份数据同时被「身份」页的 RecordView 用着,
+   * 就地改只会改页头那个对象, 两个地方就会各说各的。单条切换的代价只是一次档案请求。
+   */
+  async function toggleLifecycle() {
+    if (!companion) return
+    const next = companion.lifecycle === 'paused' ? 'active' : 'paused'
+    setSwitching(true)
+    setSwitchError(null)
+    try {
+      await setAgentLifecycle(companion.id, next)
+      reload()
+    } catch (e) {
+      setSwitchError(e instanceof ApiError ? e.message : String(e))
+    } finally {
+      setSwitching(false)
+    }
+  }
+
+  const paused = companion?.lifecycle === 'paused'
+
   return (
     <div className="space-y-5">
       <div className="flex flex-wrap items-center justify-between gap-2">
@@ -73,11 +101,27 @@ function Body() {
         >
           <ArrowLeft size={14} />返回 Agents
         </Link>
-        <Button variant="ghost" onClick={reload}><RefreshCw size={13} />刷新</Button>
+        <span className="flex items-center gap-2">
+          {companion && (
+            <Button
+              variant="ghost"
+              disabled={switching}
+              title={paused ? '让这个 agent 重新推进' : '停止推进(不删任何东西)'}
+              onClick={() => void toggleLifecycle()}
+            >
+              {paused ? <Play size={13} /> : <Pause size={13} />}
+              {paused ? '继续运行' : '停止运行'}
+            </Button>
+          )}
+          <Button variant="ghost" onClick={reload}><RefreshCw size={13} />刷新</Button>
+        </span>
       </div>
 
-      <header className="rounded-xl border border-line bg-raised px-5 py-4">
+      <header className={`rounded-xl border px-5 py-4 ${
+        paused ? 'border-warn/40 bg-raised' : 'border-line bg-raised'
+      }`}>
         <ErrorNote error={error ? describeError(error) : null} />
+        {switchError && <div className="mb-2"><ErrorNote error={switchError} /></div>}
         {loading && !companion && <Empty>读取中…</Empty>}
         {companion && (
           <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
@@ -88,7 +132,14 @@ function Body() {
             {companion.handle
               ? <span className="font-mono text-xs text-accent" title="账号ID(聊天平台侧的标识)">{companion.handle}</span>
               : <span className="text-xs text-warn">还没有账号ID</span>}
+            {paused && <Chip tone="warn">已停止</Chip>}
           </div>
+        )}
+        {paused && (
+          <p className="mt-2 text-xs leading-relaxed text-ink-faint">
+            这个 agent 已停止推进, 也不会再调用模型。记忆、关系、未说完的话都还在 ——
+            继续之后从停下的那一刻接着走。
+          </p>
         )}
       </header>
 

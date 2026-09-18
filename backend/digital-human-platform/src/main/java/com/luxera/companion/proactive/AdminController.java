@@ -104,7 +104,7 @@ public class AdminController {
     @PostMapping("/life/tick")
     public Map<String, Object> lifeTick(@RequestParam(required = false) String companionId) {
         int count = 0;
-        for (Companion c : companionRepo.findAll()) {
+        for (Companion c : companionRepo.findRunnable()) {
             if (c.getDeletedAt() != null) continue;
             if (companionId != null && !companionId.equals(c.getId())) continue;
             lifeRuntime.tick(c.getId(), LocalDateTime.now());
@@ -118,7 +118,7 @@ public class AdminController {
         // 手动触发想法维护 + 从未完成事项补触发想法
         thoughtMaintenanceJob.maintain();
         int thoughts = 0;
-        for (Companion c : companionRepo.findAll()) {
+        for (Companion c : companionRepo.findRunnable()) {
             if (c.getDeletedAt() != null) continue;
             if (companionId != null && !companionId.equals(c.getId())) continue;
             for (var loop : openLoopService.activeLoops(c.getId())) {
@@ -132,7 +132,7 @@ public class AdminController {
     public Map<String, Object> consolidate(@RequestParam(required = false) String companionId) {
         int total = 0;
         List<String> results = new ArrayList<>();
-        for (Companion c : companionRepo.findAll()) {
+        for (Companion c : companionRepo.findRunnable()) {
             if (c.getDeletedAt() != null) continue;
             if (companionId != null && !companionId.equals(c.getId())) continue;
             int n = experienceProcessor.consolidate(c.getId());
@@ -154,7 +154,7 @@ public class AdminController {
     public Map<String, Object> cognitiveTick() {
         // 统一内核 tick: Life→Emotion→Thought→OpenLoop→Proactive(设计文档 §17)
         int ticked = 0;
-        for (Companion c : companionRepo.findAll()) {
+        for (Companion c : companionRepo.findRunnable()) {
             if (c.getDeletedAt() != null) continue;
             cognitiveRuntime.tick(c.getId(), LocalDateTime.now());
             ticked++;

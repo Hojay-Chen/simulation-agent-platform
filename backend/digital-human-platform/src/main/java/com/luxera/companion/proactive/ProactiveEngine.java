@@ -96,7 +96,7 @@ public class ProactiveEngine {
         int hour = now.getHour();
         boolean inDnd = inDnd(hour, dndStart, dndEnd);
 
-        for (Companion c : companionRepo.findAll()) {
+        for (Companion c : companionRepo.findRunnable()) {
             if (c.getDeletedAt() != null) continue;
             String userId = c.getUserId();
             if (inDnd) continue;

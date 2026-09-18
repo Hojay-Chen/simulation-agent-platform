@@ -30,7 +30,7 @@ public class UnfinishedThoughtActivationJob {
     @Transactional
     public void activate() {
         LocalDateTime now = LocalDateTime.now();
-        for (Companion c : companionRepository.findAll()) {
+        for (Companion c : companionRepository.findRunnable()) {
             if (c.getDeletedAt() != null) continue;
             try {
                 var reactivated = thoughtService.activateUnfinished(c.getId(), now);

@@ -123,7 +123,7 @@ function c(over: Partial<Companion>): Companion {
 describe('summarizeCompanions', () => {
   it('空列表得到全零, 而不是 NaN', () => {
     const s = summarizeCompanions([], NOW)
-    expect(s).toMatchObject({ total: 0, withHandle: 0, missingPersona: 0, createdLast7d: 0 })
+    expect(s).toMatchObject({ total: 0, withHandle: 0, missingPersona: 0, createdLast7d: 0, paused: 0 })
     expect(s.stages).toEqual([])
     expect(s.newest).toEqual([])
   })
@@ -149,6 +149,23 @@ describe('summarizeCompanions', () => {
       c({}),
     ], NOW)
     expect(s.createdLast7d).toBe(2)
+  })
+
+  it('停着的按 lifecycle === "paused" 数, 而"字段缺席"与 null 都算在跑', () => {
+    const s = summarizeCompanions([
+      c({ lifecycle: 'paused' }),
+      c({ lifecycle: 'paused' }),
+      c({ lifecycle: 'active' }),
+      c({ lifecycle: undefined }),   // 旧后端不带这个字段
+      c({}),
+    ], NOW)
+    expect(s.paused).toBe(2)
+    expect(s.total - s.paused).toBe(3)
+
+    // 判据写成 `!== 'active'` 的话, 上面那三个"没这个字段"的会被算成停着的 ——
+    // 首页于是显示"全部已停止", 而实际上它们在持续烧钱。这是这个字段唯一一种
+    // 会让人做出错误决定 (以为可以不管了) 的坏法。
+    expect(s.paused).not.toBe(5)
   })
 
   it('阶段桶按数量降序, 同数量按名字 —— 否则每刷新一次两块就换位置', () => {

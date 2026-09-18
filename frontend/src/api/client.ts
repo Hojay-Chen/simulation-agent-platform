@@ -432,10 +432,68 @@ export interface Companion {
   greeting?: string
   createdAt?: string
   persona?: Record<string, unknown> | null
+  /**
+   * 运转状态: `'active'` | `'paused'`。见 Agent 开关。
+   *
+   * 可选(而不是必填): 后端是老版本时这个字段不在响应里, 而"字段缺席"与"她是活的"
+   * 在界面上必须表现成同一件事 —— 一个把缺席当成 `paused` 的前端会在后端还没升级时
+   * 把满屏 agent 显示成"已停止", 那比不显示更糟。
+   */
+  lifecycle?: string
 }
 
 export function listCompanions(): Promise<Companion[]> {
   return request<Companion[]>('/api/companions')
+}
+
+// ── Agent 开关 ─────────────────────────────────────────────
+//
+// 这个平台的 agent 是**持续运转**的: 定时任务在推进它的一生, 每一步都可能调 LLM。
+// 于是"先停下来"必须是一个能点的动作, 而不是"把它删了"(那是另一件事, 且不可逆)。
+//
+// 这一组端点在 8091 的用户面上, 而不是开放面上: 暂停是**所有者对自己 agent** 的操作,
+// 它需要知道"我是谁"。平台级的"全部关掉"在管理密钥面(见 scripts/agents-off.sh)。
+
+export interface AgentLifecycleRow {
+  agentId: string
+  name: string
+  lifecycle: string
+  paused: boolean
+}
+
+export interface AgentLifecycleOverview {
+  agents: AgentLifecycleRow[]
+  mineActive: number
+  minePaused: number
+  /** 全平台口径 —— 它回答"我关了的是不是全部" */
+  platform: {
+    active: number
+    paused: number
+    runtimeEnabled: boolean
+    /** 本次进程启动以来被硬闸拦下的 LLM 调用次数 —— 开关生效的证据 */
+    blockedCalls: number
+    blockedByTask: Record<string, number>
+  }
+}
+
+export function getAgentLifecycle(): Promise<AgentLifecycleOverview> {
+  return request<AgentLifecycleOverview>('/api/agents/lifecycle')
+}
+
+/** 设置一个 agent 的运转状态。**幂等** —— 重复设成同一个值不算错。 */
+export function setAgentLifecycle(agentId: string, lifecycle: 'active' | 'paused') {
+  return request<{ agentId: string; lifecycle: string; changed: boolean }>(
+    `/api/agents/${encodeURIComponent(agentId)}/lifecycle`,
+    { method: 'PUT', body: JSON.stringify({ lifecycle }) },
+  )
+}
+
+export function pauseAllMine(): Promise<{ paused: number; total: number }> {
+  return request('/api/agents/lifecycle/pause-all', { method: 'POST' })
+}
+
+export function resumeAllMine(): Promise<{ resumed: number; total: number }> {
+  return request('/api/agents/lifecycle/resume-all', { method: 'POST' })
 }
 
 export function getCompanion(id: string): Promise<Companion> {

@@ -107,9 +107,29 @@ public class Companion {
     @Column(length = 500)
     private String greeting;
 
+    /**
+     * 这个 agent 的**运转状态** —— 见 {@link AgentLifecycle}。
+     *
+     * <p>这一列从建表起就在, 默认值一直是 {@code "active"}, 而在开关落地之前
+     * **全代码库没有一处读过或写过它**。V11 的"持续世界驱动"把它用了起来:
+     * 持续运转意味着持续消耗, 于是"停下来"必须是一个显式的、可逆的、不销毁任何东西的
+     * 动作 —— 那就是这根列上的 {@code "paused"}。
+     *
+     * <p>存字符串而不是 {@code @Enumerated}: 库里已经躺着 110 行 {@code 'active'},
+     * 而 Hibernate 的 {@code EnumType.STRING} 会对认不出来的值直接抛异常。
+     * {@link AgentLifecycle#of(String)} 的宽松解析(认不出的一律当运行中)是有意的,
+     * 理由写在那里。
+     */
     @Column(length = 32)
     private String status = "active";
 
+    /**
+     * 还活着吗 —— {@code RETIRED} 那一档。
+     *
+     * <p>与 {@link #isPaused()} 是**两个不同的问题**, 刻意不合并:
+     * {@code deletedAt} 非空是"这个 agent 被销毁了"(不可逆, 历史已清理),
+     * 而 {@code paused} 是"它还在, 只是先别跑"(可逆, 一切都留着)。
+     */
     @Column(name = "deleted_at")
     private LocalDateTime deletedAt;
 
@@ -120,6 +140,20 @@ public class Companion {
     @UpdateTimestamp
     @Column(name = "updated_at", nullable = false)
     private LocalDateTime updatedAt;
+
+    /**
+     * 这个 agent 被暂停了吗。
+     *
+     * <p>写成实体上的派生方法(而不是到处 {@code AgentLifecycle.of(c.getStatus())}),
+     * 是因为它会被十几处循环用到, 而每一处都写一遍解析就等于给了每一处一个
+     * "解析规则可以略有不同"的机会。规则的唯一来源是 {@link AgentLifecycle#of(String)}。
+     *
+     * <p>它不是 JPA 字段访问的一部分: 本实体所有映射注解都在字段上, 于是 Hibernate
+     * 走 field access, 这个 getter 它看都不会看(Lombok 生成的那些同理)。
+     */
+    public boolean isPaused() {
+        return AgentLifecycle.of(status).isPaused();
+    }
 
     @PrePersist
     void assignId() {

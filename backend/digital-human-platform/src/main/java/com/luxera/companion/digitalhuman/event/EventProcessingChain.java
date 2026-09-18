@@ -19,9 +19,12 @@ import java.util.List;
 public class EventProcessingChain {
 
     private final List<AgentEventHandler> handlers;
+    private final com.luxera.companion.persona.AgentSwitchService agentSwitch;
 
-    public EventProcessingChain(List<AgentEventHandler> handlers) {
+    public EventProcessingChain(List<AgentEventHandler> handlers,
+                                com.luxera.companion.persona.AgentSwitchService agentSwitch) {
         this.handlers = List.copyOf(handlers);
+        this.agentSwitch = agentSwitch;
     }
 
     /**
@@ -34,6 +37,21 @@ public class EventProcessingChain {
         }
         if (event.personId() == null || event.personId().isBlank()) {
             return ChainOutcome.rejected("事件缺少 personId");
+        }
+        // Agent 开关: 事件是进入认知的**两条**路之一(另一条是 AgentRuntime.process 的
+        // 同步直调), 所以闸门必须在这条链的最前面 —— 一次拦住全部事件类型:
+        // 消息送达、时间事件、生活事件、设备通知、应用事件。
+        //
+        // 放在链**内部**而不是各调用方: 这条链的调用方有四个(AgentRuntime 的 mailbox、
+        // OutboxRelayJob 的兜底补投、WakeupCatchUpService 的醒来补处理、
+        // AgentApplicationFlow 的应用事件), 在调用方各拦一次就是四处漏水点。
+        //
+        // 与 AgentRuntime mailbox 里那道闸门**刻意重复**: 那道是"入口"(连事件都不必构造),
+        // 这道是"总线"(所有事件类型都经过)。多花一次主键查询, 换来的是"新加一种事件类型
+        // 时不必记得再拦一次" —— 而忘了的那次是要花钱的。
+        if (!agentSwitch.isRunnable(event.personId())) {
+            log.debug("[EventChain] agent {} 已暂停, 丢弃事件 type={}", event.personId(), event.type());
+            return ChainOutcome.rejected("agent 已暂停");
         }
         log.debug("[EventChain] {} type={} person={}", event.eventId(), event.type(), event.personId());
         for (AgentEventHandler handler : handlers) {

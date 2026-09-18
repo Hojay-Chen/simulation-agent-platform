@@ -15,6 +15,35 @@ public interface CompanionRepository extends JpaRepository<Companion, String> {
     List<Companion> findByDeletedAtIsNotNull();
 
     /**
+     * **该跑的** agent —— 活着的、且没被暂停的。所有遍历全部 agent 的定时任务用它。
+     *
+     * <h2>为什么把过滤放进查询, 而不是让每个任务自己 {@code continue}</h2>
+     *
+     * 因为那十几处循环**各自都写了 {@code if (c.getDeletedAt() != null) continue}**
+     * —— 同一个判断抄了十几遍。再往里加"还要跳过暂停的"这一维, 就是把它抄第二遍,
+     * 而这次每一处都是一个"漏了不会报错、只会继续烧钱"的机会。
+     *
+     * <p>收成一条查询之后, 新增一类任务时那行过滤是**不得不写对的**: 不调这个方法就拿
+     * 不到 agent 列表, 而拿不到列表的任务根本跑不起来。"忘了也不会出事"的规则变成了
+     * "忘了就编不过", 这是它比注释强的地方。
+     *
+     * <h2>为什么不是 {@code findAll()} 再在内存里筛</h2>
+     *
+     * 对 110 行来说两者开销都无所谓, 所以理由不是性能, 是**语义**: {@code findAll()}
+     * 是一个不表达任何意图的名字, 而"哪些 agent 该跑"是一个有答案的问题。名字里没有
+     * 答案的地方, 每个调用方就会自己编一个。
+     *
+     * <p>判据写成 {@code status is null or status <> 'paused'} 而不是
+     * {@code status = 'active'}: 前者对将来可能出现的第三种值(比如 {@code 'sleeping'})
+     * 的行为是"照常跑", 与 {@link AgentLifecycle#of(String)} 的宽松解析一致。
+     * 两处判据必须是同一个意思 —— 一处宽松一处严格的话, 症状是"列表里有它、但它不动"。
+     */
+    @Query("select c from Companion c where c.deletedAt is null "
+            + "and (c.status is null or lower(c.status) <> 'paused') "
+            + "order by c.createdAt asc")
+    List<Companion> findRunnable();
+
+    /**
      * 还活着的 Agent —— 给聊天平台的**补铸**与**对账**用。
      *
      * <p>不带分页是刻意的: 它的调用方是两个一次性的 runner, 一次要的就是全量; 一个带

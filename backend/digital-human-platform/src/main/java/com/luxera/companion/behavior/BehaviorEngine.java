@@ -94,7 +94,7 @@ public class BehaviorEngine {
     /** 对所有伴侣做一次行为评估(行为 Tick) */
     @Transactional
     public void evaluateAll(LocalDateTime now) {
-        for (Companion c : companionRepo.findAll()) {
+        for (Companion c : companionRepo.findRunnable()) {
             if (c.getDeletedAt() != null) continue;
             try {
                 // §三十九: 关系维护压力随沉默上升(驱动主动联系候选)

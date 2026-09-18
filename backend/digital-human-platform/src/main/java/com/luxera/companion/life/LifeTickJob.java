@@ -25,7 +25,7 @@ public class LifeTickJob {
     public void runLifeTick() {
         LocalDateTime now = LocalDateTime.now();
         int ticks = 0;
-        for (Companion c : companionRepo.findAll()) {
+        for (Companion c : companionRepo.findRunnable()) {
             if (c.getDeletedAt() != null) continue;
             try {
                 lifeRuntime.tick(c.getId(), now);

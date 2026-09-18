@@ -44,7 +44,12 @@ import java.util.Map;
  *
  * <p><b>代建 ≠ 拥有。</b>代建出来的 agent 的 {@code user_id} 是**真人的**, 只有
  * {@code created_by_client_id} 写客户端。于是它在客户端的列表里看得见(它确实是这个客户端
- * 建的), 却过不了 {@code requireOwned} —— 改不动也删不掉。那个 agent 属于那个真人。
+ * 建的), 却过不了 {@code requireOwned} —— 改不动、删不掉, 也停不了。那个 agent 属于那个真人。
+ *
+ * <h2>Agent 开关</h2>
+ *
+ * {@code PUT /{agentId}/lifecycle} 是这一面上的"停 / 继续"。它与另外两张面
+ * (控制台的用户 JWT、运维面的管理钥)是同一个开关的不同作用范围 —— 理由与归属规则见那个方法。
  */
 @Tag(name = "openapi-agents", description = "仿真 agent 全生命周期(客户端 API Key 面)")
 @RestController
@@ -54,12 +59,15 @@ public class OpenApiAgentController {
     private final CompanionService companionService;
     private final PersonaService personaService;
     private final com.luxera.companion.person.PersonService personService;
+    private final com.luxera.companion.persona.AgentSwitchService agentSwitch;
 
     public OpenApiAgentController(CompanionService companionService, PersonaService personaService,
-                                  com.luxera.companion.person.PersonService personService) {
+                                  com.luxera.companion.person.PersonService personService,
+                                  com.luxera.companion.persona.AgentSwitchService agentSwitch) {
         this.companionService = companionService;
         this.personaService = personaService;
         this.personService = personService;
+        this.agentSwitch = agentSwitch;
     }
 
     private static OpenApiClientRecord caller(HttpServletRequest request) {
@@ -210,6 +218,80 @@ public class OpenApiAgentController {
         }
     }
 
+    /**
+     * 停止 / 继续运行 —— **不删除任何东西**的那一档。
+     *
+     * <h2>为什么第三方程序需要它</h2>
+     *
+     * 这是"agent 平台给其他程序提供同等接入能力"这句话在开关上的落点。第三方凭
+     * {@code sap_} 钥匙建出来的 agent 是**持续运转**的: 没人跟它说话时, 定时任务照样在
+     * 推进它的一生, 每一步都可能调用模型 —— 而账是建它的那个程序在付。若这一面只有
+     * {@code DELETE}, 那么一个程序想让自己的 agent 先歇一会儿, 唯一的办法是**把它删了**,
+     * 代价是记忆、关系、未说完的话全部作废, 且 {@code chat_account_id} 的唯一约束意味着
+     * 同一个聊天账号再也建不出第二个 agent。
+     *
+     * <p>所以缺这一条不是少一个便利方法, 而是"停下"这件事在客户端面上根本没有表达方式。
+     *
+     * <h2>与另外两张面的关系</h2>
+     *
+     * 三张面给的是同一个开关, 但作用范围不同:
+     * <ul>
+     *   <li>这一面(客户端钥): 只能动**自己名下**的 agent —— 归属走
+     *       {@code requireOwned(clientId, agentId)}, 与 {@code PUT /persona} 和
+     *       {@code DELETE} 是**同一条**规则。代建出来的 agent 因此在这一面同样改不动
+     *       (它的 {@code user_id} 是真人): 看得见、停不了, 与既有的写路径一致。</li>
+     *   <li>控制台面(用户 JWT, 8091): 我自己的 agent。</li>
+     *   <li>运维面(管理钥): 全平台。</li>
+     * </ul>
+     *
+     * <p>用 {@code PUT .../lifecycle} 而不是 {@code POST .../pause}: 与另外两张面同一个形状,
+     * 于是三处的调用方读的是同一份文档; 且重复提交天然幂等。
+     */
+    @Operation(summary = "设置运转状态 — {\"lifecycle\":\"paused\"|\"active\"}, 幂等")
+    @PutMapping("/{agentId}/lifecycle")
+    public ResponseEntity<Map<String, Object>> setLifecycle(HttpServletRequest request,
+                                                            @PathVariable String agentId,
+                                                            @RequestBody SetLifecycleBody body) {
+        OpenApiClientRecord client = caller(request);
+        com.luxera.companion.persona.AgentLifecycle target = lifecycleOf(body == null ? null : body.lifecycle());
+        if (target == null) {
+            return ResponseEntity.badRequest().body(Map.of(
+                    "error", "lifecycle 必须是 active 或 paused",
+                    "hint", "{\"lifecycle\":\"paused\"} 停, {\"lifecycle\":\"active\"} 继续"));
+        }
+        try {
+            // 归属先于开关 —— 与 PUT /persona 同一条规则。反过来的话, 任何持钥者都能用
+            // 别人的 agentId 停掉别人的 agent, 而且请求是"成功"的: 开关认 id 不认人。
+            Companion c = companionService.requireOwned(client.getId(), agentId);
+            boolean changed = target.isPaused()
+                    ? agentSwitch.pause(c.getId())
+                    : agentSwitch.resume(c.getId());
+            Map<String, Object> resp = new LinkedHashMap<>();
+            resp.put("agentId", c.getId());
+            resp.put("lifecycle", target.wire());
+            resp.put("changed", changed);
+            return ResponseEntity.ok(resp);
+        } catch (RuntimeException e) {
+            return ResponseEntity.notFound().build();
+        }
+    }
+
+    /**
+     * 宽松解析**大小写**, 严格解析**取值** —— 与 {@code AgentLifecycleController} 同一套规矩。
+     *
+     * <p>打错的值必须回 400 而不是被当成默认值: 若 {@code "stop"} 被读成 {@code active},
+     * 症状是"我明明按了停, 它还在烧 token", 而没有人会去怀疑那个请求体。
+     */
+    private static com.luxera.companion.persona.AgentLifecycle lifecycleOf(String raw) {
+        if (raw == null || raw.isBlank()) return null;
+        String v = raw.trim();
+        for (com.luxera.companion.persona.AgentLifecycle l
+                : com.luxera.companion.persona.AgentLifecycle.values()) {
+            if (l.wire().equalsIgnoreCase(v)) return l;
+        }
+        return null;
+    }
+
     // ── dto ──────────────────────────────────────────────────────────────
 
     /**
@@ -221,6 +303,12 @@ public class OpenApiAgentController {
      *
      * <p>{@code chatAccountId} / {@code handle} 可空: 第三方自助创建的 agent 没有聊天账号,
      * 而 handle 在补号 runner 跑过之前可能还没有。
+     *
+     * <p>{@code status} 与 {@code lifecycle} 一起给, 是因为它们**不是同一件事**:
+     * {@code status} 是那一列的原值(存量行可能是 {@code null}), 而 {@code lifecycle} 是规范化
+     * 之后的取值 —— 永远非空, 且只有 {@code active} / {@code paused} 两种。一个程序化的
+     * 调用方该读后者: 让每一个第三方各自实现一遍"什么样的 status 算停"是错的做法, 而
+     * 他们只要漏掉 {@code null} 这一个分支, 就会把自己的存量 agent 误判成停着的。
      */
     private Map<String, Object> toDto(OpenApiClientRecord client, Companion c) {
         Map<String, Object> m = new LinkedHashMap<>();
@@ -230,6 +318,7 @@ public class OpenApiAgentController {
         m.put("handle", personService.handleOfCompanion(c.getId()));
         m.put("name", c.getName());
         m.put("status", c.getStatus());
+        m.put("lifecycle", com.luxera.companion.persona.AgentLifecycle.of(c.getStatus()).wire());
         m.put("createdAt", c.getCreatedAt() == null ? null : c.getCreatedAt().toString());
         return m;
     }
@@ -247,4 +336,5 @@ public class OpenApiAgentController {
     public record CreateAgentBody(String description, Persona persona, String relationshipType,
                                   String chatAccountId, String ownerUserId) {}
     public record UpdatePersonaBody(String description, String reason) {}
+    public record SetLifecycleBody(String lifecycle) {}
 }

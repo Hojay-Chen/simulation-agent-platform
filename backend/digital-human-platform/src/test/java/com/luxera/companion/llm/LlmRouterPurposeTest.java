@@ -56,8 +56,14 @@ class LlmRouterPurposeTest {
 
         gateway = mock(MockLlmGateway.class);
         llmCallService = mock(LlmCallService.class);
+        // Agent 开关的硬闸: 本类测的是用途路由, 与开关无关, 所以给一个"谁都放行"的替身
+        // —— isRunnable 默认 false 的话, 下面每一条断言都会看到空回复而全线失败,
+        // 而那种失败与用途路由毫无关系。
+        com.luxera.companion.persona.AgentSwitchService agentSwitch =
+                mock(com.luxera.companion.persona.AgentSwitchService.class);
+        when(agentSwitch.isRunnable(any())).thenReturn(true);
         router = new LlmRouter(props, mock(OpenAiCompatibleGateway.class),
-                mock(AnthropicGateway.class), gateway, llmCallService);
+                mock(AnthropicGateway.class), gateway, llmCallService, agentSwitch, mapper);
         router.init();
 
         when(gateway.structured(any())).thenReturn(new StructuredResult("{}", mapper));

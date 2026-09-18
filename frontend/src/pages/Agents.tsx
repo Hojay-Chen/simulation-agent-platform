@@ -1,18 +1,21 @@
 import { useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
-import { Bot, ChevronRight, RefreshCw, Trash2 } from 'lucide-react'
+import { Bot, ChevronRight, Pause, Play, RefreshCw, Trash2 } from 'lucide-react'
 import {
   ApiError,
   createAgent,
   deleteAgent,
   listAgents,
   listCompanions,
+  pauseAllMine,
+  resumeAllMine,
+  setAgentLifecycle,
   type AgentSummary,
 } from '@/api/client'
 import { useAsync } from '@/lib/useAsync'
 import { useSessionStore } from '@/stores/session'
 import { AgentCreateForm, type AgentFormInput } from '@/components/AgentCreateForm'
-import { Button, Empty, ErrorNote, Notice, Panel } from '@/components/ui'
+import { Button, Chip, Empty, ErrorNote, Notice, Panel } from '@/components/ui'
 import { RequireStudio } from '@/components/StudioLogin'
 
 /**
@@ -46,7 +49,43 @@ export function Agents() {
 
 /** 人这一侧 —— 与首页同一个数据源, 所以两边数量永远一致。 */
 function MyAgents() {
-  const { data, loading, error, reload } = useAsync(() => listCompanions(), [])
+  const { data, loading, error, reload, setData } = useAsync(() => listCompanions(), [])
+  const [busy, setBusy] = useState(false)
+  const [switchError, setSwitchError] = useState<string | null>(null)
+
+  const paused = (data ?? []).filter((c) => c.lifecycle === 'paused')
+
+  /*
+   * 批量暂停之后**重取**而不是就地改本地数组。
+   *
+   * 就地改更快, 但它会掩盖一件事: 批量暂停在服务端是逐个 agent 做的, 而"我提交的这批
+   * 全都成功了"只是客户端的猜测 —— 若中间有一个失败, 本地数组会显示全部已停,
+   * 而服务端不是。重取把界面重新钉在服务端事实上, 代价是一次列表请求。
+   */
+  async function bulk(action: 'pause' | 'resume') {
+    setBusy(true)
+    setSwitchError(null)
+    try {
+      await (action === 'pause' ? pauseAllMine() : resumeAllMine())
+      reload()
+    } catch (e) {
+      setSwitchError(e instanceof ApiError ? e.message : String(e))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function toggle(id: string, next: 'active' | 'paused') {
+    setSwitchError(null)
+    try {
+      await setAgentLifecycle(id, next)
+      // 就地改这一行: 单个开关的响应里带着权威的新状态, 为一个开关重取整张列表
+      // 会让整页闪一下, 而用户刚点的是这一行 —— 视觉上应当只有这一行动。
+      setData((data ?? []).map((c) => (c.id === id ? { ...c, lifecycle: next } : c)))
+    } catch (e) {
+      setSwitchError(e instanceof ApiError ? e.message : String(e))
+    }
+  }
 
   return (
     <Panel
@@ -55,38 +94,86 @@ function MyAgents() {
         <span className="flex items-center gap-2">
           <span className="text-xs text-ink-faint">
             按人在聊天平台上的归属 · {data?.length ?? 0}
+            {paused.length > 0 && <span className="ml-1 text-warn">({paused.length} 已停止)</span>}
           </span>
+          {(data?.length ?? 0) > 0 && (
+            <>
+              <Button
+                variant="ghost"
+                disabled={busy}
+                title="停止我名下全部 agent —— 它们不再推进、不再调 LLM"
+                onClick={() => void bulk('pause')}
+              >
+                <Pause size={13} />全部停止
+              </Button>
+              <Button
+                variant="ghost"
+                disabled={busy}
+                title="恢复我名下全部 agent"
+                onClick={() => void bulk('resume')}
+              >
+                <Play size={13} />全部继续
+              </Button>
+            </>
+          )}
           <Button variant="ghost" onClick={reload}><RefreshCw size={13} />刷新</Button>
         </span>
       }
     >
       <ErrorNote error={error} />
+      {switchError && <div className="mb-2"><ErrorNote error={switchError} /></div>}
+      <p className="mb-3 text-xs leading-relaxed text-ink-faint">
+        这些 agent 是<b>持续运转</b>的: 没人说话时, 定时任务也在推进它们的一生, 而每一步
+        都可能调用模型。停止<b>不删除任何东西</b> —— 记忆、关系、未说的话全部留着,
+        继续之后从停下的那一刻接着走。
+      </p>
       {loading && !data && <Empty>读取中…</Empty>}
       {data && data.length === 0 && (
         <Empty>你在聊天平台上还没有 agent。到聊天平台里「一键创建 agent 好友」建一个。</Empty>
       )}
       {data && data.length > 0 && (
         <ul className="divide-y divide-line">
-          {data.map((c) => (
-            <li key={c.id}>
-              <Link
-                to={`/agents/${encodeURIComponent(c.id)}`}
-                className="flex items-center gap-3 px-1 py-3 transition hover:bg-sunken/60"
-              >
-                <span className="grid h-9 w-9 shrink-0 place-items-center rounded-lg border border-line bg-raised text-accent">
-                  <Bot size={16} />
-                </span>
-                <span className="min-w-0 flex-1">
-                  <span className="block truncate text-sm text-ink">{c.name || c.id}</span>
-                  <span className="block truncate font-mono text-xs text-ink-faint">
-                    {c.handle || '还没有账号ID'}
+          {data.map((c) => {
+            const isPaused = c.lifecycle === 'paused'
+            return (
+              <li key={c.id} className="flex items-center gap-3 px-1 py-3">
+                <Link
+                  to={`/agents/${encodeURIComponent(c.id)}`}
+                  className="flex min-w-0 flex-1 items-center gap-3 transition hover:opacity-80"
+                >
+                  <span
+                    className={`grid h-9 w-9 shrink-0 place-items-center rounded-lg border bg-raised ${
+                      isPaused ? 'border-line text-ink-faint' : 'border-line text-accent'
+                    }`}
+                  >
+                    <Bot size={16} />
                   </span>
-                </span>
-                <span className="shrink-0 text-xs text-ink-faint">{c.relationshipStage ?? ''}</span>
-                <ChevronRight size={14} className="shrink-0 text-ink-faint" />
-              </Link>
-            </li>
-          ))}
+                  <span className="min-w-0 flex-1">
+                    <span className="flex items-center gap-2">
+                      <span className="truncate text-sm text-ink">{c.name || c.id}</span>
+                      {isPaused && <Chip tone="warn">已停止</Chip>}
+                    </span>
+                    <span className="block truncate font-mono text-xs text-ink-faint">
+                      {c.handle || '还没有账号ID'}
+                    </span>
+                  </span>
+                  <span className="shrink-0 text-xs text-ink-faint">{c.relationshipStage ?? ''}</span>
+                </Link>
+                <Button
+                  variant="ghost"
+                  disabled={busy}
+                  title={isPaused ? '继续运行' : '停止运行(不删任何东西)'}
+                  onClick={() => void toggle(c.id, isPaused ? 'active' : 'paused')}
+                >
+                  {isPaused ? <Play size={13} /> : <Pause size={13} />}
+                  {isPaused ? '继续' : '停止'}
+                </Button>
+                <Link to={`/agents/${encodeURIComponent(c.id)}`} className="shrink-0 text-ink-faint">
+                  <ChevronRight size={14} />
+                </Link>
+              </li>
+            )
+          })}
         </ul>
       )}
     </Panel>

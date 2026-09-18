@@ -34,6 +34,13 @@ import org.springframework.scheduling.annotation.EnableScheduling;
 //   (AgentState 实体 + EmotionReducer + StateController 不进, AvailabilityService 不进)
 //   / relationship 的两层薄件(Service+Repository 层, Engine/Narrative/Promise/Thread 不进)
 // 仓储经 @EnableJpaRepositories 独立注册, 不依赖组件扫描 — 薄件的全部数据访问照常。
+//
+// 2026-09: AgentSwitchService 进白名单。它不是"又一个薄件" —— 它是 LlmRouter 的
+// 构造参数(LLM 硬闸要从它问"这个 agent 停了吗"), 而 LlmRouter 早就在白名单里。
+// 漏掉它的症状是 8092 **启动即失败**(无参可注入), 而不是某个功能悄悄失效 —— 这一条
+// 是编译期/启动期的, 属于白名单里少有的"忘了会立刻知道"的情况。
+// 它只依赖 CompanionRepository(persona 包, 已由 @EnableJpaRepositories 注册),
+// 不拉起任何认知链组件, 所以它进得来。
 @ComponentScan(basePackages = {
         "com.luxera.agentopenapi",            // 本服务自己的包
         // DH 范围包 — 列在这里只是给 includeFilters 一个搜索范围;
@@ -47,7 +54,7 @@ import org.springframework.scheduling.annotation.EnableScheduling;
         "com.luxera.companion.config",        // 仓 2 kernel(AppProperties/CurrentUser)
         "com.luxera.companion.common",
 }, useDefaultFilters = false, includeFilters = @Filter(type = FilterType.REGEX, pattern =
-        "com\\.luxera\\.companion\\.(persona\\.(CompanionService|PersonaService|PersonaCompiler)"
+        "com\\.luxera\\.companion\\.(persona\\.(CompanionService|PersonaService|PersonaCompiler|AgentSwitchService)"
         + "|relationship\\.RelationshipService"
         + "|person\\.PersonService"
         + "|state\\.(AgentStateService|EmotionReducer)"

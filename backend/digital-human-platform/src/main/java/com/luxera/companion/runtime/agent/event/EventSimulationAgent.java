@@ -59,6 +59,13 @@ public class EventSimulationAgent implements Agent<EventSimulationContext, Event
                     .user(buildUser(ctx))
                     .task("event-simulation")
                     .schemaHint("{\"candidates\":[{\"eventType\":\"\",\"probability\":0.0,\"trigger\":\"\",\"consequences\":[]}]}")
+                    // 带上 companionId 有两个作用, 缺一不可:
+                    //  1. Agent 开关的硬闸靠它认人 —— 没有它, 这条路是唯一一处
+                    //     "暂停了也照样调 LLM"的漏洞, 而它恰好是空闲部署上的头号开销
+                    //     (每个醒着的 agent 每 30 分钟无条件一次)。
+                    //  2. LlmCallService 靠它记账 —— 没有它, 这次调用**根本不进 llm_calls**,
+                    //     于是这条最贵的路在"这个 agent 花了多少"的账本上是隐形的。
+                    .metadata(java.util.Map.of("companionId", ctx.companionId()))
                     .build());
             return parse(result.getRaw());
         } catch (Exception e) {

@@ -32,7 +32,7 @@ public class EventSimulationJob {
     @Scheduled(cron = "${app.scheduler.event-simulation-cron:0 */30 * * * *}")
     public void run() {
         LocalDateTime now = LocalDateTime.now();
-        List<Companion> companions = companionRepo.findAll();
+        List<Companion> companions = companionRepo.findRunnable();
         for (Companion c : companions) {
             if (c.getDeletedAt() != null) continue;
             // 睡觉时不模拟生活事件

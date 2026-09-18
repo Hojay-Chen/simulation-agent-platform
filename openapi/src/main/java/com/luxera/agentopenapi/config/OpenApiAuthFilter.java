@@ -20,10 +20,12 @@ import java.util.Optional;
  * 对外 OpenAPI 的鉴权 —— 两把钥匙, 两个面。
  *
  * <ul>
- *   <li><b>管理面</b> {@code POST/GET/DELETE /api/v1/openapi/clients**}:
+ *   <li><b>管理面</b> {@code /api/v1/openapi/clients**} 与 {@code /api/v1/openapi/admin**}:
  *       {@code X-Admin-Key} 头, 全局一把({@code OPENAPI_ADMIN_KEY} env)。未配 → 503
  *       死端点(与仓 1 MCP "密钥没配就完全不服务"同哲学)。建客户端是"发钥匙"的动作,
- *       只能由平台管理员做 —— 一把管理钥换任意把客户端钥。</li>
+ *       只能由平台管理员做 —— 一把管理钥换任意把客户端钥。{@code admin} 命名空间
+ *       装的是**跨客户端**的运维动作(目前只有 agent 开关), 它放在这里而不是客户端面,
+ *       理由见下面 {@code ADMIN_PREFIX} 那段。</li>
  *   <li><b>客户端面</b> {@code /api/v1/openapi/agents**}:
  *       {@code Authorization: Bearer sap_...}, 每客户端一把。命中后把
  *       {@code OpenApiClientRecord} 作为 request attribute 交给下游 ——
@@ -43,6 +45,7 @@ public class OpenApiAuthFilter extends OncePerRequestFilter {
 
     private static final String OPENAPI_PREFIX = "/api/v1/openapi/";
     private static final String CLIENTS_PREFIX = "/api/v1/openapi/clients";
+    private static final String ADMIN_PREFIX = "/api/v1/openapi/admin";
 
     private final String adminKey;
     private final OpenApiClientRepository clients;
@@ -61,8 +64,20 @@ public class OpenApiAuthFilter extends OncePerRequestFilter {
             return;
         }
 
-        // ── 管理面: clients 资源 ──
-        if (path.startsWith(CLIENTS_PREFIX)) {
+        // ── 管理面: clients 资源 + admin 命名空间 ──
+        //
+        // `/api/v1/openapi/admin/**` 是平台级运维动作(见 OpenApiAdminLifecycleController)。
+        // 它与 clients 一样吃 X-Admin-Key, 理由也一样: 它做的事**跨客户端** ——
+        // "把全平台所有 agent 停下来"不是任何一个客户端能对自己做的操作。若把它放回
+        // 客户端面, 那要么是"持钥者能停别人的 agent"(越权), 要么是"谁也停不了全部"
+        // (做不到), 两条都不对。
+        //
+        // 用 `equals(ADMIN_PREFIX) || startsWith(ADMIN_PREFIX + "/")` 而不是裸
+        // `startsWith(ADMIN_PREFIX)`: 后者会让 `/api/v1/openapi/administrators` 也被
+        // 判成管理面 —— 与前端 `faceOf()` 里"裸 startsWith 把 clients-archive 判成管理面"
+        // 是同一类错, 只是这里错的方向更危险(把该拦的放进了管理面)。
+        if (path.startsWith(CLIENTS_PREFIX)
+                || path.equals(ADMIN_PREFIX) || path.startsWith(ADMIN_PREFIX + "/")) {
             if (adminKey.isBlank()) {
                 response.setStatus(HttpServletResponse.SC_SERVICE_UNAVAILABLE);
                 response.setContentType("application/json; charset=utf-8");

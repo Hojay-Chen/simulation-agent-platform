@@ -27,7 +27,7 @@ public class MemoryConsolidationJob {
     @Scheduled(cron = "${app.scheduler.memory-consolidation-cron}")
     public void consolidateAll() {
         int total = 0;
-        for (Companion c : companionRepo.findAll()) {
+        for (Companion c : companionRepo.findRunnable()) {
             if (c.getDeletedAt() != null) continue;
             try {
                 total += experienceProcessor.consolidate(c.getId());

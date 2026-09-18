@@ -210,6 +210,9 @@ public class CompanionController {
         dto.setGreeting(c.getGreeting());
         dto.setPersona(companionService.getPersona(c.getId()));
         dto.setCreatedAt(c.getCreatedAt());
+        // 从实体上直接读, 不查库也不问 AgentSwitchService —— 状态就在 companions 行上,
+        // 而这行刚刚才被查出来
+        dto.setLifecycle(AgentLifecycle.of(c.getStatus()).wire());
         Relationship rel = relationshipService.find(userId, c.getId());
         if (rel != null) {
             dto.setRelationshipType(rel.getRelationshipType());

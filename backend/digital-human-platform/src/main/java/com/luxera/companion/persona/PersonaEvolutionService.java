@@ -68,7 +68,7 @@ public class PersonaEvolutionService {
     @Transactional
     public List<String> runAll() {
         List<String> results = new ArrayList<>();
-        for (Companion c : companionRepo.findAll()) {
+        for (Companion c : companionRepo.findRunnable()) {
             if (c.getDeletedAt() != null) continue;
             List<String> changes = evolve(c);
             if (!changes.isEmpty()) {
@@ -96,6 +96,10 @@ public class PersonaEvolutionService {
                     .system(prompt)
                     .user("请基于以上证据提出分层演化。")
                     .temperature(0.3)
+                    // 同 EventSimulationAgent: 开关的硬闸与 llm_calls 的记账都靠它认人。
+                    // 这条路是空闲部署上第二大的开销 —— 它**没有"这周聊过天吗"这个前提**,
+                    // 只要有 persona 就调, 所以没有这一行它就绕过了整个开关。
+                    .metadata(java.util.Map.of("companionId", c.getId()))
                     .build());
             JsonNode root = res.getJson();
 

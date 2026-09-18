@@ -74,6 +74,16 @@ describe('faceOf — Studio 面(8091, 用户 JWT)', () => {
     expect(faceOf(url)).toBe('studio')
   })
 
+  it('agent 开关归 Studio 面 —— 它走"我是不是这个人", 不是"我是不是这个客户端"', () => {
+    // 这两条路由与 /api/v1/openapi/agents/{id} 只差一个前缀, 判错的方向是把用户 JWT
+    // 当成 sap_ 客户端钥发出去 —— 症状是"我按了停止, 控制台说钥匙无效", 而用户会去
+    // 怀疑那把钥匙, 不会怀疑路由。
+    expect(faceOf('/api/agents/lifecycle')).toBe('studio')
+    expect(faceOf('/api/agents/lifecycle/pause-all')).toBe('studio')
+    expect(faceOf('/api/agents/lifecycle/resume-all')).toBe('studio')
+    expect(faceOf('/api/agents/c-1/lifecycle')).toBe('studio')
+  })
+
   it('开放面与 Studio 面不会互相吃掉', () => {
     // 两个面都在 /api/ 之下, 而 studio 的规则是"其余全部 /api/**"——
     // 顺序写反的话, 开放面会被 studio 吃掉, 于是拿着 sap_ 客户端钥的开发者面

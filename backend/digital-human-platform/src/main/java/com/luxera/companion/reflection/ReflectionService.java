@@ -97,7 +97,7 @@ public class ReflectionService {
     @Transactional
     public List<ReflectionRecord> runAllDaily() {
         List<ReflectionRecord> results = new ArrayList<>();
-        for (Companion c : companionRepo.findAll()) {
+        for (Companion c : companionRepo.findRunnable()) {
             if (c.getDeletedAt() != null) continue;
             try {
                 results.add(dailyReflect(c));
@@ -111,7 +111,7 @@ public class ReflectionService {
     @Transactional
     public List<ReflectionRecord> runAllWeekly() {
         List<ReflectionRecord> results = new ArrayList<>();
-        for (Companion c : companionRepo.findAll()) {
+        for (Companion c : companionRepo.findRunnable()) {
             if (c.getDeletedAt() != null) continue;
             try {
                 results.add(weeklyReflect(c));

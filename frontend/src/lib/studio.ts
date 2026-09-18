@@ -231,6 +231,8 @@ export interface DashboardSummary {
   /** 没有可读人格版本的 —— 建是建出来了, 但还没编译出人格。 */
   missingPersona: number
   createdLast7d: number
+  /** 当前停着的 —— "还在花钱的" 就是 `total - paused`。 */
+  paused: number
   stages: StageBucket[]
   newest: Companion[]
 }
@@ -259,10 +261,14 @@ export function summarizeCompanions(list: readonly Companion[], now: number): Da
   let withHandle = 0
   let missingPersona = 0
   let createdLast7d = 0
+  let paused = 0
 
   for (const c of list) {
     if ((c.handle ?? '').trim()) withHandle += 1
     if (!c.persona) missingPersona += 1
+    // 判据必须是"等于 paused", 不是"不等于 active": 字段缺席(旧后端)与 status 为 null
+    // (存量行)都表示**在跑**, 把它们算成停着的会让首页说"全部已停止"而实际上它们在烧钱。
+    if (c.lifecycle === 'paused') paused += 1
     const stage = stageOf(c)
     bucket.set(stage, (bucket.get(stage) ?? 0) + 1)
     const t = c.createdAt ? Date.parse(c.createdAt) : NaN
@@ -280,5 +286,5 @@ export function summarizeCompanions(list: readonly Companion[], now: number): Da
     .sort((a, b) => Date.parse(b.createdAt!) - Date.parse(a.createdAt!))
     .slice(0, 5)
 
-  return { total: list.length, withHandle, missingPersona, createdLast7d, stages, newest }
+  return { total: list.length, withHandle, missingPersona, createdLast7d, paused, stages, newest }
 }

@@ -29,7 +29,7 @@ public class RelationshipProjectionJob {
     @Scheduled(cron = "${app.scheduler.relationship-projection-cron:0 0 4 * * *}")
     public void reconcileAll() {
         int reconciled = 0;
-        for (Companion companion : companionRepository.findAll()) {
+        for (Companion companion : companionRepository.findRunnable()) {
             if (companion.getDeletedAt() != null || companion.getUserId() == null) {
                 continue;
             }

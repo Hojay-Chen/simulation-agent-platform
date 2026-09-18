@@ -40,7 +40,7 @@ public class BirthdayService {
 
     @Scheduled(cron = "${app.scheduler.birthday-cron}")
     public void ensureBirthdayReminders() {
-        for (Companion c : companionRepo.findAll()) {
+        for (Companion c : companionRepo.findRunnable()) {
             if (c.getDeletedAt() != null || c.getBirthDate() == null) continue;
             try {
                 reminderService.create(c.getUserId(), c.getId(), "birthday",

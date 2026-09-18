@@ -69,6 +69,15 @@ public final class CompanionDtos {
         private String relationshipType;
         private String relationshipStage;
         private LocalDateTime createdAt;
+        /**
+         * 运转状态: {@code active} | {@code paused} —— 见 {@link AgentLifecycle}。
+         *
+         * <p>放进列表 DTO 而不是只做一个单独的开关端点, 是因为**列表页必须能一眼看出
+         * 哪些是停着的**。一个停着的 agent 在界面上与一个安静的 agent 长得一模一样,
+         * 而"她怎么不回我"与"我上周把她关了"是两件完全不同的事 —— 后者的答案不该
+         * 要求运维逐个点进去看。
+         */
+        private String lifecycle;
     }
 
     @Data

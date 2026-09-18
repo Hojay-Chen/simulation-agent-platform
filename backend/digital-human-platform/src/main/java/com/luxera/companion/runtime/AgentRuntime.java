@@ -97,6 +97,8 @@ public class AgentRuntime {
     private final ConversationOutputValidator outputValidator;
     /** V10 §4: Strangler 入口 — V10 感知决策影子对比 + 短路 */
     private final com.luxera.companion.digitalhuman.hotpath.V10HotpathGateway v10Hotpath;
+    /** Agent 开关: "这一个 agent 现在要不要跑"。见 {@code AgentSwitchService} 的类注释。 */
+    private final com.luxera.companion.persona.AgentSwitchService agentSwitch;
 
     // V10 §14/LAP: 应用动作的执行入口已迁出本类 —— 见 AgentApplicationFlow。
     // 认知链不再持有 ActionRuntime / LlmRouter / ObjectMapper: 它不认识任何应用,
@@ -119,7 +121,8 @@ public class AgentRuntime {
                           RealityLedger realityLedger,
                           EventProcessingChain eventProcessingChain, EventRouter eventRouter,
                           ConversationOutputValidator outputValidator,
-                          com.luxera.companion.digitalhuman.hotpath.V10HotpathGateway v10Hotpath) {
+                          com.luxera.companion.digitalhuman.hotpath.V10HotpathGateway v10Hotpath,
+                          com.luxera.companion.persona.AgentSwitchService agentSwitch) {
         this.chatWorld = chatWorld;
         this.perceptionEngine = perceptionEngine;
         this.workingMemory = workingMemory;
@@ -146,6 +149,7 @@ public class AgentRuntime {
         this.eventRouter = eventRouter;
         this.outputValidator = outputValidator;
         this.v10Hotpath = v10Hotpath;
+        this.agentSwitch = agentSwitch;
     }
 
     /**
@@ -183,6 +187,20 @@ public class AgentRuntime {
                                 List<MessageView> userMessages, String phase) {
         personActorRegistry.tell(companionId, () -> {
             try {
+                // Agent 开关: 闸门在**任务体内**, 不在提交处。
+                //
+                // 差别的全部意义在于"暂停之前已经排进邮箱的那几条"。邮箱是 FIFO 的,
+                // 提交处检查只能拦住"按下开关之后才来的"消息; 而按下开关那一刻队列里
+                // 可能正躺着几条(连发消息、或者 outbox 一次性补投的一批), 它们会在
+                // 开关生效之后照常跑完整条认知链 —— 于是"我关了它, 它怎么还在回话"
+                // 变成了一个真实会发生的问题。放在任务体里, 那一刻之后**一条都不跑**。
+                //
+                // 而且这条检查必须在业务代码之前、在 `userMessages == null` 之前:
+                // 它是这个任务做的第一件事, 也是唯一一件不产生副作用的事。
+                if (!agentSwitch.isRunnable(companionId)) {
+                    log.debug("[AgentRuntime] agent {} 已暂停, 丢弃一次消息投递", companionId);
+                    return;
+                }
                 if (userMessages == null || userMessages.isEmpty()) return;
                 String lastMessageId = userMessages.get(userMessages.size() - 1).getId();
                 // 确定性事件 id: 同阶段同批消息重试/重放时幂等短路
@@ -226,6 +244,13 @@ public class AgentRuntime {
 
     /** Agent 异步处理已入库的用户消息(完整认知链) */
     public void process(String userId, String companionId, String conversationId, List<MessageView> userMessages) {
+        // Agent 开关的第二道入口检查。上面那个在 mailbox 任务体里, 这一处在 process 本身
+        // —— 因为**不是所有认知都经过 mailbox**: `ChatStreamController` 的 SSE 兼容路径
+        // 直接同步调用本方法。两处都要有, 否则那条路会绕过开关。
+        if (!agentSwitch.isRunnable(companionId)) {
+            log.debug("[AgentRuntime] agent {} 已暂停, 跳过一次认知处理", companionId);
+            return;
+        }
         if (userMessages == null || userMessages.isEmpty()) return;
         // V10 §20: per-person 统一串行设施(与 PersonActor mailbox 同一互斥体;
         // 同步调用路径与异步 mailbox 路径互斥, 状态修改永不走并发)
