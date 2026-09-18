@@ -14,7 +14,7 @@
 |---|---|
 | 需要新建 WorldEvent | **已经有三套**：`runtime/WorldEvent`(record)+`world_events` 表(4478 行)、`world/WorldEvent`(实体)+`digital_world_events`(21854 行)、`digitalhuman/event/ExternalEvent`(外部事件链)。**要的是统一，不是新建** |
 | 需要新建 mailbox | `digitalhuman/actor/PersonActor` 已经是 per-agent 阻塞队列 + 单消费线程 + 30s 空闲回收；`PersonActorRegistry.tell()` 是全系统唯一写入口。缺的是**类型化**与**持久化** |
-| 需要新建 OpenLoop / Intention | **两张表与 Service 都在**（`open_loops` / `intentions`）。`open_loops` 是 **0 行** —— 有 job 无产出，问题是没接上，不是没写 |
+| 需要新建 OpenLoop / Intention | **两张表与 Service 都在**（`open_loops` / `intentions`）。`intentions` 24 行、`thoughts` 52 行, 而 `open_loops` 是 **0 行** |
 | 需要新建 Decision | `digitalhuman/decision/PersonDecision` 已有 Ignore/InspectDevice/Reply/DelayReply/ChangeActivity `DecisionPolicyEngine` 已在跑 |
 | 需要新建 Awareness | `runtime/WorldEventType` 已定义完整阶梯：`RECEIVED→NOTIFIED→NOTICED→READ→DEFERRED`；`phone/PhoneNotification` 表已有 111 行 |
 | Shadow Mode 要新建 | `digitalhuman/hotpath/V10HotpathGateway` + `ShadowDecisionRecorder` **已在跑**（`shadow=true, enabled=false` 默认） |
@@ -22,6 +22,25 @@
 
 **结论：V11 的主体工作是"接线与统一"，不是"从零造"。** 这决定了本次不采用重写，
 而是沿用 V10 已经验证过的 Strangler 套路（Adapter → Shadow → Dual Run → Cutover → Cleanup）。
+
+### 0.1 一条被推翻的底盘结论（`open_loops` 0 行）
+
+上面这张表原先写着"`open_loops` 是 0 行 —— **有 job 无产出，问题是没接上，不是没写**"。
+Phase 3 开工时逐行核对，**结论是反的**：
+
+- 线是通的：`AgentPostProcessor.afterExchange`（`@Async`，挂在回复路径上）→
+  `ThoughtEngine.maybeFromConversation` → `OpenLoopService.create`，一路都有调用者。
+- 0 行的真实原因是 **触发条件饿死**：`ThoughtEngine.RESOLUTION_PATTERN` 要求
+  `(明天|后天|下周|今晚|过几天)…(面试|考试|开会|…)` 或 `等(消息|结果|通知)` 或
+  `(面试|考试)(结果|出来|怎么样)` 这类显式的"待办 + 时间"句式。
+- 证据：拿库里 145 条真实用户消息逐条跑那个正则，**0 条命中**。
+
+所以"Phase 3 要把 `openloop/` 接进 MindState"这句话的准确含义是：**不是接线，是消费**。
+`MindStateService.snapshot(...)` 通过 `OpenLoopService` / `IntentionService`（与
+`AgentSnapshotService` 同一对 Service）把这两张表读进她的心智切面 —— 一份数据两个读口，
+数字不会分叉。**放宽正则不是解法**：把"她记不记得住一件事"交给一个更宽松的正则，
+只会把噪声写进 `open_loops`。真正的解法是 Phase 5 的主动行为里用 LLM 抽取（那时它
+有一个不循环的位置），本文档不在 Phase 3 做这件事，也不假装它已经做了。
 
 ### 两个必须尊重的现实约束
 
@@ -170,11 +189,66 @@ Phase 2 的用例（86 条，全部绿）：`DeliverySalienceTest`（显著性�
 
 ### Phase 3：连续意识
 
-`mind/MindState`（+ `WorkingThread`、`FocusState`）+ 持久化；
-`ConversationTurnAggregator`（OPEN→QUIET_WAIT→SEALED→PROCESSING→COMPLETED）+ 定时 seal；
-把既有 `openloop/`、`intention/` 接进 MindState（**`open_loops` 表 0 行是接线问题**）。
+**交付**（`mind/` 6 个类 + `runtime/v11/` 3 个类）：
+
+| 类 | 职责 |
+|---|---|
+| `mind/TurnWindow` | 静默窗口 / 硬上限 / 条数上限。构造器校验，配错在**启动时**炸 |
+| `mind/ConversationTurnAggregator` | 纯状态机（无依赖、无 sleep、无时钟）。`OPEN→QUIET_WAIT→SEALED`，后两态刻意不表达 |
+| `mind/WorkingThread` / `FocusState` / `MindSnapshot` | 工作台、关注点、心智切面（三个 record，无行为） |
+| `mind/MindState`（表 `agent_mind_states`）+ `Repository` + `Service` | 持久化；**写由一处上闸**，读不上闸 |
+| `runtime/v11/V11TurnsSwitch` | `app.v11.turns.*`——与 `app.v11.runtime.*` 刻意不合并（见下） |
+| `runtime/v11/V11TurnPath` | 回合这条链上唯一知道"封口之后发生什么"的地方 |
+| `runtime/v11/V11TurnSealJob` | 每秒一次：到期 → 入队。**调度线程上不跑认知** |
 
 **验收**：m1/m2/m3 在一个 quiet window 内 → **1 个** Cognitive Turn，不是 3 个。
+`ConversationTurnAggregatorTest$Acceptance` 直接断言这一点（1 个回合、3 条消息、
+`messagesPerTurn == 3.0`），并配一条反向用例：三句隔十分钟 → 3 个回合、合并率回到 1.0。
+
+**开工后才发现、并因此改了设计的事：**
+
+1. **调度线程只有一根。** Spring 默认 `ThreadPoolTaskScheduler` 池大小是 1（本工程既没配
+   `spring.task.scheduling.pool.size`，也没有自定义 `TaskScheduler` bean），全平台 ~19 个
+   `@Scheduled` 共用它，含 5 秒一次的 `outbox-relay`。所以"封口即处理"会让一次 LLM 把
+   全平台的定时任务一起按住。**解法**：job 只做"查开关 + 入队"，认知由
+   `PersonActorRegistry.tell` 送回 agent 自己的消费线程（也是它今天本来就在跑的线程）。
+   `V11TurnSealJobTest` 用**真实的** `PersonActorRegistry` 断言认知线程名是
+   `person-actor-<agentId>` —— 用一个假的入队测不出这件事。
+2. **回合 id 必须可重算**，否则日志、`agent_mind_states.last_turn_id`、阶梯事件对不上号。
+   用 `会话#第一条消息`（确定性），不是随机 UUID。上限 160 字符。
+3. **`@Transactional` 在自调用上是装饰。** `getOrCreate` 由此改成 `private`——
+   它的真正价值不是事务，而是让"建行"这件事只有一个只能在闸门之后到达的入口。
+4. **shadow 必须走自己的入口。** `V11TurnPath.accept` 会写心智，`observe` 不会；闸门在
+   `MindStateService` 里（`turns.isEnabled()`）。测试里若用 `accept` 喂 shadow，
+   mock 上没有闸门，用例会看见一个生产上不存在的交互，把"shadow 不写心智"测成假的。
+5. **序列化失败要"不写"，不是"写空"。** `writeThreads` 失败返回 `null` 并让调用方
+   `return`（保留库里原来的工作台），而不是返回 `[]` —— 后者是把一次技术故障写成她的记忆。
+   同样地，读坏 JSON 按"没有线"处理：反向选择会让一条写坏的记录从此让这个 agent 的
+   每次读写都失败。
+6. **`last_cognitive_at` 只在认知真跑过时才推。** 被暂停丢掉、读不到正文、认知抛异常
+   的回合都记 `cognized=false`：账目要记，但"她上一次真正想过事"不能是假话。
+7. **`@Scheduled` 的默认值里不能带引号。** YAML 里 `turn-seal-cron: '*/1 * * * * *'` 的
+   引号是给 YAML 的（`*` 开头会被当成别名），而 `${key:default}` 的 default 是**逐字**
+   取的 —— 把 YAML 那行原样粘进注解，得到的是一个以单引号开头的非法 cron，表现为
+   **所有 Spring 上下文测试一起红**（`IllegalStateException: invalid @Scheduled method`，
+   而不是一条 CronExpression 解析失败）。这正是全量测试存在的意义：本类的单元测试
+   （纯 Mockito，不起 Spring）全绿，只有起上下文的用例才看得见它。
+
+**对设计文档 §9.2 的一处有意偏离**：文档的 `MindState` 列了 `attention` / `emotion` /
+`social` / `life` 四个字段。本实现**不把它们存进 `agent_mind_states`** —— 它们各自已经有家
+（`agent_states`、通知表、关系表、life 内核），再存一份就是同一件事的两个值：一个由本表
+写入者更新、一个由原子系统更新。要"全"的那个东西是 `MindSnapshot`（读取时向同一对
+Service 要，与 `AgentSnapshotService` 同源），不是这条记录。理由是"两个答案"比"字段少"
+糟得多：发现它们不一致需要有人同时读两处。这段话写在 `MindState` 的类注释里。
+
+**四个"知道但今天拿不到"的判据**（§8.3 列了六个，只实现了两个）：契约里没有"对方正在
+输入"这个信号；"语义是否完整"要用一个 LLM 回合去决定要不要开一个 LLM 回合（循环论证，
+正确位置是 Phase 4 的 `WAIT` 决策）；"她自己的状态 / 是不是正在做别的事"要有 Phase 4 的
+决策输入。全部写在 `TurnWindow` 的类注释里，而不是假装它们已经被考虑过。
+
+**已知限制（Phase 5 负责）**：in-flight 的消息 id **刻意不持久化**（避免第二个真相源与
+会话状态分叉）。后果是重启会丢掉正在静默窗口里的那个回合 —— 一次重启期间对方说的话，
+会等下一次送达或 Phase 5 的主动唤醒才被处理。
 
 ### Phase 4：认知重构
 
@@ -221,8 +295,13 @@ Life / OpenLoop / Relationship 三类触发器产出**事件**（不是直接聊
       V10 shadow 是纯成本、切流前必须先有消费者）。
       **切流前置条件（未做）**：① 阶梯事件要有消费者；② 真实流量下 shadow 分歧率可读
       （`GET /api/companions/{id}/v5/v11`）；③ `enabled=true` 的端到端测试。
-- [ ] Phase 3
-- [ ] Phase 4
+- [x] Phase 3 —— 连续意识。交付 9 个类 + 58 条用例; 默认
+      `app.v11.turns.enabled=false / shadow=true`（跑聚合状态机、记合并率, 认知仍是一次
+      送达一次）。三句话并成一个回合的验收有正反两条用例。**Phase 2 → Phase 3 的开关
+      依赖方向写进了代码**: `runtime.enabled=false` 时 `turns.enabled=true` 不会有任何效果
+      （回合合并长在 V11 送达主链上），启动打 WARN、诊断端点的 `turns` 段直说。
+      `GET /api/companions/{id}/v5/v11` 新增 `turns` 段：内存计数器（本次启动）与
+      落库累计值（跨重启）并列 —— 只给一个的话，一次部署会让合并率看起来突然变 0 或翻倍。
 - [ ] Phase 5
 - [ ] Phase 6
 - [ ] 全量测试 + 两仓部署 + 截图 + 全部 agent 关闭

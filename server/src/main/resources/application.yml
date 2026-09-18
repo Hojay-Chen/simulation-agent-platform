@@ -132,6 +132,9 @@ app:
     life-schedule-cron: '*/20 * * * * *'
     # V10 关系事实与 Reality 核对(默认每日 04:00)
     relationship-projection-cron: '0 0 4 * * *'
+    # V11 回合封口检查(默认每秒) — 只做"入队", 不在调度线程上跑认知。
+    # Spring 的 TaskScheduler 默认池大小是 1, 全部 @Scheduled 共用那根线程, 见 V11TurnSealJob
+    turn-seal-cron: '*/1 * * * * *'
 
   # 主动消息打断控制
   proactive:
@@ -149,3 +152,21 @@ app:
     chat-ws-url: ${CHAT_WS_URL:ws://127.0.0.1:8081/ws/simulator}
     # 数据面走 WS 而非进程内直调 —— 两进程分离后这是唯一实时通道
     backend: websocket
+
+  # ── V11 持久世界驱动运行时 ─────────────────────────────────────────
+  # 迁移纪律 §25: Adapter → Shadow → Dual Run → Cutover → Cleanup。
+  # 下面两组开关一次只翻一组 —— 合成一个的后果不是省事, 而是切流那天无法归因。
+  v11:
+    # Phase 2: "她会不会注意到这条消息"
+    runtime:
+      enabled: false      # 接管送达主链(读正文之前先判定注意)
+      shadow: true        # 并跑判定、记录与老链的分歧; 不改行为(默认)
+    # Phase 3: "连着来的几句话算几次认知"
+    # 注意它长在 runtime 主链上: runtime.enabled=false 时打开这里不会有任何效果,
+    # 启动会打 WARN, GET /api/companions/{id}/v5/v11 的 turns 段也会直说。
+    turns:
+      enabled: false      # 回合封口驱动认知(三句话一个回合)
+      shadow: true        # 跑聚合状态机、记录合并率, 但不接管认知(默认)
+      quiet-window-ms: 4000    # 对方停多久算"说完了"(太短则三句话变三个回合)
+      max-window-ms: 45000     # 一条线最多拖多久不给回音(太长则对方觉得她死了)
+      max-messages: 8          # 攒到这么多条就不再等(是"不再等", 不是"丢掉多的")

@@ -73,3 +73,9 @@ app:
     runtime:
       enabled: false
       shadow: false
+    # 同上: 两个都钉死。turns.shadow 生产默认 true, 继承过来的话每个送达都会多跑一遍
+    # 聚合状态机, 于是"这条用例验证的是合并还是没合并"变得要读完配置才知道。
+    # 窗口值刻意用出厂默认 —— 要测别的时序的用例自己传 now, 不靠改配置。
+    turns:
+      enabled: false
+      shadow: false

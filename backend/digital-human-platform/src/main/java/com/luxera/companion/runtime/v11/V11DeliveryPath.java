@@ -6,6 +6,7 @@ import com.luxera.companion.attention.DeliverySalience;
 import com.luxera.companion.attention.DeliverySignals;
 import com.luxera.companion.agent.CompanionSchedule;
 import com.luxera.companion.contracts.api.MessageView;
+import com.luxera.companion.mind.ConversationTurnAggregator;
 import com.luxera.companion.phone.AwarenessLadder;
 import com.luxera.companion.phone.MessageBatch;
 import com.luxera.companion.phone.PhoneState;
@@ -29,6 +30,7 @@ import java.util.function.Consumer;
  *     → NOTIFIED          手机响了
  *     → 算显著性(不读正文) → 注意 → NOTICED / 没注意到
  *     → 决定了要看 → READ  ← 正文到这一刻才允许进入进程
+ *     → (Phase 3 打开时) 攒成一个回合, 由 {@link V11TurnPath} 在封口时读一次
  * </pre>
  * 老链是"到达 = 读取 = 处理"三步并作一步。本类存在的全部意义, 是让中间那两步
  * <b>可以被拒绝、可以被计数、可以被断言</b>。
@@ -80,11 +82,12 @@ public class V11DeliveryPath {
     private final CompanionSchedule schedule;
     private final AwarenessLadder ladder;
     private final ReadMessagesAction readMessages;
+    private final V11TurnPath turnPath;
 
     public V11DeliveryPath(DeliverySignals signals, AttentionService attentionService,
                            PhoneStateService phoneStates, AgentStateService agentStates,
                            CompanionSchedule schedule, AwarenessLadder ladder,
-                           ReadMessagesAction readMessages) {
+                           ReadMessagesAction readMessages, V11TurnPath turnPath) {
         this.signals = signals;
         this.attentionService = attentionService;
         this.phoneStates = phoneStates;
@@ -92,6 +95,7 @@ public class V11DeliveryPath {
         this.schedule = schedule;
         this.ladder = ladder;
         this.readMessages = readMessages;
+        this.turnPath = turnPath;
     }
 
     /**
@@ -181,19 +185,41 @@ public class V11DeliveryPath {
         }
         ladder.noticed(agentId, conversationId, messageIds);
 
-        // 4. 她决定看一眼 —— 正文到这一刻才允许进入进程
+        // 4. 她决定看一眼。
+        //
+        // 4a. Phase 3 接管时, "看"这件事被推迟到回合封口 —— 因为对方可能还在说。
+        //     这里只把消息<b>记进回合</b>: 不读正文, 于是三句话到封口时只读一次、
+        //     只记一次 READ 台阶。正文在这一行之后仍然没有进入本进程。
+        if (turnPath.isAggregating()) {
+            turnPath.accept(new ConversationTurnAggregator.Delivery(
+                    agentId, userId, conversationId, messageIds, now), sink);
+            return true;
+        }
+
+        // 4b. 没有回合合并: 老行为 —— 注意到了就看一眼
+        readAndHand(agentId, conversationId, messageIds, sink);
+        return true;
+    }
+
+    /**
+     * 她看了一眼, 并把看到的交给认知。<b>合并与不合并共用这一段。</b>
+     *
+     * <p>抽出来是为了让"有没有回合合并"这个差异只体现在<b>什么时候读</b>上,
+     * 而不是连"读到之后怎么交出去"都各写一遍 —— 后者迟早会漂移成两种行为。
+     */
+    void readAndHand(String agentId, String conversationId, List<String> messageIds,
+                     Consumer<List<MessageView>> sink) {
         MessageBatch batch = readMessages.readDelivered(agentId, conversationId, messageIds);
         List<MessageView> messages = batch.messages();
         if (messages.isEmpty()) {
             // 她看了一眼, 却什么都没读到(设备没配对/没信号/消息比扫描窗口更老)。
             // 这不是"没人找她", 是"她正在错过什么" —— 所以按 WARN, 不混进正常流程。
             log.warn("[V11] {} 注意到了但没读到正文: {}", agentId, batch.note());
-            return true;
+            return;
         }
         log.info("[V11] {} 读到了 {} 条(经 {}), 进入认知链",
                 agentId, messages.size(), batch.transport().wire());
         sink.accept(messages);
-        return true;
     }
 
     // ─────────────────────────── shadow 记录 ───────────────────────────
@@ -207,5 +233,24 @@ public class V11DeliveryPath {
                              Assessment a, int readCount, LocalDateTime now) {
         shadow.record(agentId, burstSize, a.salience(), a.noticeProbability(),
                 a.noticed(), true, readCount, now);
+    }
+
+    /**
+     * shadow 下的回合观测: 让聚合状态机跑一遍, 只留数字。
+     *
+     * <p>为什么喂进去的是<b>判定为注意到</b>的那些: 合并率要回答的问题是"切流之后
+     * 几句话算一次认知", 而切流之后只有被注意到的消息才进回合。把没注意到的也算进去,
+     * 会得到一个好看的、但属于另一个世界的数字。
+     *
+     * <p>shadow 模式下老链仍然处理<b>全部</b>消息(它不知道"没注意到"这个概念),
+     * 所以两个数字之间的落差是预期内的, 不是 bug。
+     */
+    public void observeTurn(String userId, String agentId, String conversationId,
+                            List<String> messageIds, Assessment a, LocalDateTime now) {
+        if (!turnPath.isObserving() || !a.noticed()) {
+            return;
+        }
+        turnPath.observe(new ConversationTurnAggregator.Delivery(
+                agentId, userId, conversationId, messageIds, now));
     }
 }

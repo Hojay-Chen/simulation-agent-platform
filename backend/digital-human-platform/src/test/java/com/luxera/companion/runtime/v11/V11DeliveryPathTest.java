@@ -51,13 +51,15 @@ class V11DeliveryPathTest {
     @Mock private CompanionSchedule schedule;
     @Mock private AwarenessLadder ladder;
     @Mock private ReadMessagesAction readMessages;
+    /** 默认 {@code isAggregating()=false} —— 于是这一整类测的是"没有回合合并"的老行为。 */
+    @Mock private V11TurnPath turnPath;
 
     private V11DeliveryPath path;
 
     @BeforeEach
     void setUp() {
         path = new V11DeliveryPath(signals, attentionService, phoneStates, agentStates,
-                schedule, ladder, readMessages);
+                schedule, ladder, readMessages, turnPath);
         when(signals.collect(any(), any(), any(), anyInt())).thenReturn(
                 new DeliverySalience.Signals(1, DeliverySalience.NEVER_REPLIED_MINUTES, 100, 0.4, 0.5, 0.0));
         when(schedule.activityFor(any(), any())).thenReturn(CompanionSchedule.Activity.EVENING);
