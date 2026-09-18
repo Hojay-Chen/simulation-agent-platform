@@ -21,11 +21,9 @@
  */
 
 import {
-  getAgentStateFull,
   getLapCatalog,
   getLife,
   getMetrics,
-  getRelationship,
   getRelationshipNarrative,
   getSelfModel,
   listExperiences,
@@ -53,15 +51,35 @@ export interface SectionSpec {
   empty?: string
 }
 
+/**
+ * 她这一侧的八个标签页。
+ *
+ * <h2>顺序不是随手排的, 它是一条问问题的顺序</h2>
+ *
+ * 前四个是"**她此刻**"——今天怎么过、打算做什么、手机上有没有人找她、身体怎么样。
+ * 这四个回答的是同一种问题, 所以它们必须连在一起、并且排在最前面: 一个想看她的人
+ * 打开这一页, 想知道的是"她好吗", 而不是"她的 relationship 表的第 7 列是什么"。
+ *
+ * 后四个是"**她是谁**"——她的通讯录、她记得的事、她在想什么、以及一份原始档案。
+ * 这一半是慢的、累积的。把它和前四个混在一起, 就会出现"她的态度"和"她的 intimacy
+ * 字段"并排放在一屏里的情况, 而那是两个完全不同层次的东西。
+ *
+ * <h2>`archive` 是刻意留下的那个"丑"页</h2>
+ *
+ * 原始 JSON 没有消失 —— 它被**收敛**到最后一个标签页里。这不是偷懒: 界面上一旦
+ * 有一个地方能看见原始返回体, 排查"这个字段到底有没有值"就不需要开命令行。但
+ * 它只能是**一个**地方, 而且必须是最后一个 —— 否则每一页都会退化成 JSON 查看器,
+ * 那正是这次重做要解决的问题。
+ */
 export const AGENT_TABS = [
-  { id: 'overview', label: '总览' },
-  { id: 'identity', label: '身份' },
-  { id: 'personality', label: '人格' },
+  { id: 'today', label: '今天' },
+  { id: 'plan', label: '计划表' },
+  { id: 'phone', label: '手机' },
+  { id: 'body', label: '身体' },
+  { id: 'relationship', label: '关系网' },
   { id: 'memory', label: '记忆' },
-  { id: 'relationship', label: '关系' },
-  { id: 'life', label: '生活' },
-  { id: 'skills', label: '技能' },
-  { id: 'activity', label: '活动' },
+  { id: 'mind', label: '心智' },
+  { id: 'archive', label: '档案' },
 ] as const
 
 export type AgentTab = (typeof AGENT_TABS)[number]['id']
@@ -69,55 +87,40 @@ export type AgentTab = (typeof AGENT_TABS)[number]['id']
 const TAB_IDS = AGENT_TABS.map((t) => t.id) as readonly string[]
 
 /**
+ * 没有指定标签页时落到哪里。
+ *
+ * 是 `today` 而不是某个"总览": 打开一个 agent 时最该看见的东西是**她今天在做什么**,
+ * 那是一句人话能回答的问题。原来的 `overview` 是一屏 JSON, 它回答的是"这个对象有哪些
+ * 字段" —— 那是给调试用的问题, 不是给看她用的。
+ */
+export const DEFAULT_TAB: AgentTab = 'today'
+
+/**
  * URL 里的 `?tab=` 收敛成一个已知值。
  *
  * 这里**必须**兜底而不是报错: 标签页是用户手改 URL 能碰到的东西, 一个拼错的
  * tab 值弹出一整页错误, 会让人以为 agent 读不出来 —— 而实际只是拼错了。回到
- * 总览, 用户自己会发现。
+ * 默认页, 用户自己会发现。
  */
 export function tabOf(raw: string | null | undefined): AgentTab {
-  return TAB_IDS.includes(raw ?? '') ? (raw as AgentTab) : 'overview'
+  return TAB_IDS.includes(raw ?? '') ? (raw as AgentTab) : DEFAULT_TAB
 }
 
 const SECTIONS: Record<AgentTab, SectionSpec[]> = {
-  overview: [
-    {
-      key: 'state',
-      title: '实时状态',
-      load: getAgentStateFull,
-      hint: '由 server:8091 的认知链持续写入。它只在这里显示, 打开本页不会触发任何认知。',
-      empty: '认知链还没为这个 agent 建出 state —— 它收到第一条消息后才会出现。',
-    },
-    {
-      key: 'metrics',
-      title: '指标',
-      load: getMetrics,
-      hint: '认知链自己的计数器(轮次、命中率、耗时)。',
-    },
-  ],
-  // 身份页由页面自己提供: 页头(名字/账号ID)读的也是同一条档案, 让这张表再取一次
-  // 同一个端点只是白打一次请求。见 AgentDetail 的 identity 分支。
-  identity: [],
-  personality: [
-    {
-      key: 'persona-versions',
-      title: '人格版本',
-      load: listPersonaVersions,
-      empty: '还没有人格版本。',
-    },
-    {
-      key: 'self-model',
-      title: '自我模型',
-      load: getSelfModel,
-      hint: '她对自己的描述 —— 由认知链从长期记忆里归纳, 不等同于上面那份被编译出来的人格。',
-      empty: '认知链还没归纳出自我模型。',
-    },
-  ],
-  // 记忆页是唯一带输入框的标签页(搜索), 由 MemoryTab 单独实现, 这里空着。
-  memory: [],
+  // ── 她此刻: 全部由专门组件实现(时间轴 / 差异表 / 推演台 / 仪表) ──
+  today: [],
+  plan: [],
+  phone: [],
+  body: [],
 
+  // 关系网是"前缀 + 表"的混血: 上面那两块是从 Reality Ledger 投影出来的事实摘要
+  // 与维度条(前者需要 `userId`, 表驱动那套签名给不了), 下面四块是原来的内省接口。
+  // 见 PREFIXED_TABS。
+  //
+  // 「关系维度」那块**没有**在这里: 它现在由 `Relation.tsx` 用 `Meter` 画成十条量
+  // (与身体那页同一种画法), 而不是一张原始 JSON。留在这里会得到同一份数据画两遍,
+  // 而两遍里更丑的那一遍恰好排在更显眼的位置。
   relationship: [
-    { key: 'relationship', title: '关系', load: getRelationship },
     {
       key: 'narrative',
       title: '关系叙事',
@@ -145,14 +148,38 @@ const SECTIONS: Record<AgentTab, SectionSpec[]> = {
       empty: '没有未兑现的承诺。',
     },
   ],
-  life: [
-    { key: 'life', title: '生活状态', load: getLife, empty: '生活线还没启动。' },
+
+  // 记忆页是唯一带输入框的标签页(搜索), 由 MemoryTab 单独实现。
+  memory: [],
+
+  // ── 她是谁: 纯表驱动, 形状与原来一致 ──
+  mind: [
+    {
+      key: 'self-model',
+      title: '自我模型',
+      load: getSelfModel,
+      hint: '她对自己的描述 —— 由认知链从长期记忆里归纳。它与「档案」里那份被编译出来的人格是两样东西: 一个是她自己写的, 一个是给她的。',
+      empty: '认知链还没归纳出自我模型。',
+    },
+    {
+      key: 'metrics',
+      title: '认知指标',
+      load: getMetrics,
+      hint: '认知链自己的计数器(轮次、模型调用、命中率、耗时)。它是"这个 agent 花了多少"的唯一来源。',
+    },
+    { key: 'traces', title: '认知轨迹', load: listTraces, empty: '还没有轨迹。' },
+    { key: 'reflections', title: '反思', load: listReflections, empty: '她还没反思过什么。' },
+    { key: 'experiences', title: '经历', load: listExperiences, empty: '还没有积累经历。' },
+  ],
+
+  archive: [
+    { key: 'persona-versions', title: '人格版本', load: listPersonaVersions, empty: '还没有人格版本。' },
     { key: 'life-events', title: '生活事件', load: listLifeEvents, empty: '还没有生活事件。' },
     {
       key: 'world-events',
-      title: '世界事件',
+      title: '世界事件(原始)',
       load: listWorldEvents,
-      hint: '世界自己发生的事 —— 不是她做的, 但她会知道。',
+      hint: '滚动 50 条的原始列表。它的**分类**在「今天」和运维的「事件流」里画出来了, 这里是原文。',
       empty: '世界还很安静。',
     },
     {
@@ -162,8 +189,13 @@ const SECTIONS: Record<AgentTab, SectionSpec[]> = {
       hint: '开了口没合上的事(约好的、答应过的、被打断的)。',
       empty: '没有悬着的事。',
     },
-  ],
-  skills: [
+    {
+      key: 'life',
+      title: '生活状态(原始)',
+      load: getLife,
+      hint: '`GET /life` 的完整返回体。「今天」那一页把它画成了时间轴, 这里是原文。',
+      empty: '生活线还没启动。',
+    },
     {
       key: 'lap-catalog',
       title: '应用平台能力',
@@ -172,31 +204,27 @@ const SECTIONS: Record<AgentTab, SectionSpec[]> = {
       empty: '应用平台现在没有登记任何能力。要么它还没接上来, 要么目录是空的。',
     },
   ],
-  activity: [
-    { key: 'traces', title: '认知轨迹', load: listTraces, empty: '还没有轨迹。' },
-    {
-      key: 'reflections',
-      title: '反思',
-      load: listReflections,
-      empty: '她还没反思过什么。',
-    },
-    { key: 'experiences', title: '经历', load: listExperiences, empty: '还没有积累经历。' },
-  ],
 }
 
 /**
- * 由**页面**而不是这张表提供的标签页。
+ * 完全由**页面**实现的标签页 —— 表里没有面板。
  *
- *   - `identity`: 页头(名字 + 账号ID)读的就是这条档案, 让表再取一次同一端点只是白打
- *     一次请求, 还会让页头与档案页在极端情况下显示两个不同的名字。
- *   - `memory`: 唯一带输入框的一页(搜索), 形状与其余七页不同。
- *
- * 列成一个常量是为了让"哪些页是空的需要专门处理"成为可断言的事实 —— 否则某天有人
- * 往表里加了一个空页, 页面上会出现一个点进去什么都没有的标签。
+ * 列成一个常量是为了让"哪些页是空的"成为可断言的事实(见 `studio.test.ts`)。
+ * 否则某天有人往表里加了一个空页, 页面上会出现一个点进去什么都没有的标签。
  */
-export const COMPONENT_TABS: readonly AgentTab[] = ['identity', 'memory']
+export const COMPONENT_TABS: readonly AgentTab[] = ['today', 'plan', 'phone', 'body', 'memory']
 
-/** 一个标签页里的所有面板。空数组 = 该标签页由专门组件实现(见 COMPONENT_TABS)。 */
+/**
+ * 前面一块由组件画、后面几块仍然表驱动的标签页。
+ *
+ * 这一类是这次重做**必须**长出来的: 关系网的核心数据(Reality Ledger 投影)需要
+ * `userId`, 而 `SectionSpec.load` 的签名只有 `agentId` —— 硬塞进去只能靠在模块级
+ * 缓存一个全局的当前用户, 那是一种把依赖藏起来、出问题时最难查的写法。所以这一类
+ * 页面的做法是: 组件画上面, `<Section>` 照常画下面。
+ */
+export const PREFIXED_TABS: readonly AgentTab[] = ['relationship']
+
+/** 一个标签页里表驱动的那些面板。空数组 = 没有表驱动部分。 */
 export function sectionsOf(tab: AgentTab): SectionSpec[] {
   return SECTIONS[tab]
 }

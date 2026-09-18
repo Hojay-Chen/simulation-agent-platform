@@ -14,14 +14,37 @@ import {
 } from '@/api/client'
 import { useAsync } from '@/lib/useAsync'
 import { useSessionStore } from '@/stores/session'
-import { AGENT_TABS, COMPONENT_TABS, distinctTypes, sectionsOf, tabOf } from '@/lib/studio'
+import { AGENT_TABS, DEFAULT_TAB, PREFIXED_TABS, distinctTypes, sectionsOf, tabOf } from '@/lib/studio'
 import { RecordView } from '@/components/RecordView'
 import { Section, describeError } from '@/components/Section'
 import { RequireStudio } from '@/components/StudioLogin'
 import { Button, Chip, Empty, ErrorNote, Field, Panel, inputClass } from '@/components/ui'
+/*
+ * 四个"她此刻"的页 + 关系网。`Body` 在这里改名, 因为本文件里已经有一个同名的局部
+ * 函数(页面外壳) —— 两个 `Body` 撞在一起时 TypeScript 报的是"属性不存在"这种
+ * 看不出根因的错。
+ */
+import { Body as BodyTab } from './agent/Body'
+import { Phone } from './agent/Phone'
+import { Plan } from './agent/Plan'
+import { Relation } from './agent/Relation'
+import { Today } from './agent/Today'
 
 /**
- * agent 详情 —— §19.2 的八个标签页。
+ * agent 详情 —— 八个标签页。**打开一个 agent 就是打开这一页**, 所以它得先回答
+ * "她今天怎么样", 才轮到"她有哪些字段"。
+ *
+ * <h2>八个页分成两半, 前四后四</h2>
+ *
+ * 前四个(今天 / 计划表 / 手机 / 身体)回答的是同一个问题: **她此刻**。它们是快的、
+ * 看得见变化的 —— 今天怎么过、打算做什么、手机响不响、身体怎么样。所以它们连在一起
+ * 并排在最前面。
+ *
+ * 后四个(关系网 / 记忆 / 心智 / 档案)回答的是另一个问题: **她是谁**。它们是慢的、
+ * 累积的。把这两半混排, 就会出现"她的态度"和"她的 intimacy 字段"并排摆在一屏里。
+ *
+ * 原始 JSON 没有消失, 它被**收敛**到最后一个「档案」页里 —— 界面上一旦有两处能看见
+ * 原始返回体, 每一页都会退化成 JSON 查看器。这条约束由 `studio.test.ts` 钉着。
  *
  * <h2>两套归属, 一个 id</h2>
  *
@@ -30,12 +53,13 @@ import { Button, Chip, Empty, ErrorNote, Field, Panel, inputClass } from '@/comp
  * "你是不是这个 API 客户端"是两条独立的规则。
  *
  * 两条路径里的 id 是**同一个值**(`companions.id`), 所以从哪一栏点进来都落到这里。
- * 而账号ID(`agent_…`)是聊天平台侧的标识, 它只在这一页的「身份」里出现, 且**不可修改**。
+ * 而账号ID(`agent_…`)是聊天平台侧的标识, 它只在这一页的页头出现, 且**不可修改**。
  *
  * <h2>为什么选中项在 URL 里</h2>
  *
  * 标签页落在 `?tab=`, 与之前 `?id=` 的理由一样: 刷新、分享链接、从别处返回都还停在
- * 同一处。`tabOf()` 会把拼错的 tab 收敛回总览, 而不是弹一整页错误。
+ * 同一处。`tabOf()` 会把拼错的 tab(以及重做之前那六个旧 id)收敛回默认页, 而不是
+ * 弹一整页错误。
  */
 export function AgentDetail() {
   return (
@@ -62,7 +86,9 @@ function Body() {
 
   function selectTab(next: string) {
     const p = new URLSearchParams(params)
-    if (next === 'overview') p.delete('tab')
+    // 默认页不留 `?tab=` —— 一条"她的今天"的链接不该带一个多余的参数, 而且默认页
+    // 哪天换了, 那些链接会自动跟到新默认页, 而不是钉死在旧的那一页上。
+    if (next === DEFAULT_TAB) p.delete('tab')
     else p.set('tab', next)
     setParams(p, { replace: true })
   }
@@ -164,32 +190,42 @@ function Body() {
         })}
       </nav>
 
-      {tab === 'identity' && (
-        <Panel
-          title="档案"
-          action={companion && (
-            <span className="flex items-center gap-2 text-xs text-ink-faint">
-              {companion.relationshipType && <span>{companion.relationshipType}</span>}
-              {companion.relationshipStage && <span>· {companion.relationshipStage}</span>}
-            </span>
-          )}
-        >
+      {/*
+        前四页是「她此刻」, 各由一个专门组件画 —— 它们的形状互不相同(时间轴 / 差异表 /
+        推演台 / 仪表), 那正是它们必须排在最前面的原因: 打开一个 agent, 最该先看见的
+        是"她今天怎么过", 而不是"这个对象有哪些字段"。
+      */}
+      {tab === 'today' && <Today agentId={agentId} />}
+      {tab === 'plan' && <Plan agentId={agentId} />}
+      {tab === 'phone' && <Phone agentId={agentId} />}
+      {tab === 'body' && <BodyTab agentId={agentId} />}
+
+      {tab === 'memory' && <MemoryTab agentId={agentId} />}
+
+      {/* 前缀页: 组件先画上面那一块(它需要 userId, 表驱动给不了), 表里的面板照常画在下面。 */}
+      {PREFIXED_TABS.includes(tab) && tab === 'relationship' && <Relation agentId={agentId} />}
+
+      {sectionsOf(tab).map((spec) => (
+        <Section key={spec.key} spec={spec} agentId={agentId} />
+      ))}
+
+      {/*
+        档案页额外放一份**编译进她的人格**, 以及开放面操作。
+        它只能是档案页: 那两份都是"给机器看的原文", 放在「今天」上会让一条时间轴
+        旁边出现一个 JSON 折叠块, 而那正是这次重做要解决的东西。
+      */}
+      {tab === 'archive' && companion && (
+        <Panel title="档案原文">
           <p className="mb-4 text-xs leading-relaxed text-ink-faint">
             <span className="font-mono text-ink-soft">id</span> 是**本平台**标识这个 agent 个体的值,
-            <span className="mx-1 font-mono text-ink-soft">handle</span>是聊天平台侧的账号ID。
-            两者永不可互换 —— 前者不可变, 后者由系统分配、agent 自己改不了。
+            <span className="mx-1 font-mono text-ink-soft">handle</span> 是聊天平台侧的账号ID。
+            两者永不可互换 —— 前者不可变, 后者由系统分配、她自己也改不了。
           </p>
           <RecordView value={companion} empty="读不到这个 agent 的档案。" />
         </Panel>
       )}
 
-      {tab === 'memory' && <MemoryTab agentId={agentId} />}
-
-      {!COMPONENT_TABS.includes(tab) && sectionsOf(tab).map((spec) => (
-        <Section key={spec.key} spec={spec} agentId={agentId} />
-      ))}
-
-      {companion && <OpenApiActions companion={companion} onDeleted={backToList} />}
+      {tab === 'archive' && companion && <OpenApiActions companion={companion} onDeleted={backToList} />}
     </div>
   )
 }

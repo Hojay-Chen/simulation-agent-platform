@@ -52,6 +52,16 @@ module.exports = {
         warn: 'rgb(var(--warn) / <alpha-value>)',
         danger: 'rgb(var(--danger) / <alpha-value>)',
 
+        // ── 事件的三种类别 ──────────────────
+        // V2.2 §5.2 的三个能力接口。**它们不是三种事件**, 是同一个事件可以同时
+        // 属于的三种处理方式。界面上只承担一件事: 让人一眼看出这条要不要马上管。
+        /** A 持续影响 —— 慢, 但一直在(降温、饥饿) */
+        'cat-effect': 'rgb(var(--cat-effect) / <alpha-value>)',
+        /** B 实时感官 —— 必须现在处理(手机响、疼) */
+        'cat-sensory': 'rgb(var(--cat-sensory) / <alpha-value>)',
+        /** C 计划表 —— 时间段型, 属于时间轴 */
+        'cat-schedule': 'rgb(var(--cat-schedule) / <alpha-value>)',
+
         // ── IM 气泡 ─────────────────────────
         // 这个控制台不画气泡, 但 token 留着 —— 两个前端的变量定义要能逐字对照,
         // 少三项的后果是下次同步时没人知道该不该补。

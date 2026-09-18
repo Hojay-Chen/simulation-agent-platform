@@ -34,10 +34,20 @@ export const BACKEND_OWNED_PREFIXES = [
  *
  * 只列**静态**的那几条(动态段如 `/agents/:agentId` 与旧地址转发不在内) —— 它们是
  * "用户可能直接敲进地址栏或收藏"的那些, 也就是会撞上前缀规则的那些。
+ *
+ * <h2>表里的顺序就是侧栏的顺序, 也是那张两栏分组的顺序</h2>
+ *
+ * 前两条(`/`、`/agents`)是**看她的人**用的, 其余是运维/开发用的。这个顺序在这个
+ * 文件里只是排版, 在 `Layout.tsx` 的 `NAV_GROUPS` 里才是那件事本身 —— 但两边必须
+ * 一致, 否则"侧栏看上去是两拨, 地址栏读上去是一串"。
  */
 export const SPA_PATHS = {
   dashboard: '/',
   agents: '/agents',
+  /** 运维面: 世界往她那儿递了什么。 */
+  events: '/events',
+  /** 运维面: 认知链的计数、轨迹、排程与降级。 */
+  runtime: '/runtime',
   applications: '/applications',
   /** 栏目名是「API」, 路径必须是 /access —— 见文件头。 */
   access: '/access',

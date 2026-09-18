@@ -10,6 +10,8 @@ import type { Companion } from '@/api/client'
 import {
   AGENT_TABS,
   COMPONENT_TABS,
+  DEFAULT_TAB,
+  PREFIXED_TABS,
   UNKNOWN_STAGE,
   distinctTypes,
   sectionsOf,
@@ -23,12 +25,24 @@ describe('tabOf', () => {
     for (const t of AGENT_TABS) expect(tabOf(t.id)).toBe(t.id)
   })
 
-  it('不认识的、缺的、空的全部回总览 —— 手改 URL 不该得到一整页错误', () => {
-    expect(tabOf('nope')).toBe('overview')
-    expect(tabOf(null)).toBe('overview')
-    expect(tabOf(undefined)).toBe('overview')
-    expect(tabOf('')).toBe('overview')
-    expect(tabOf('Overview')).toBe('overview')
+  it('不认识的、缺的、空的全部回默认页 —— 手改 URL 不该得到一整页错误', () => {
+    expect(tabOf('nope')).toBe(DEFAULT_TAB)
+    expect(tabOf(null)).toBe(DEFAULT_TAB)
+    expect(tabOf(undefined)).toBe(DEFAULT_TAB)
+    expect(tabOf('')).toBe(DEFAULT_TAB)
+    expect(tabOf('Today')).toBe(DEFAULT_TAB)
+  })
+
+  it('默认页必须是一个真的标签页 —— 否则打开详情就是一片空白', () => {
+    expect(AGENT_TABS.some((t) => t.id === DEFAULT_TAB)).toBe(true)
+  })
+
+  it('旧标签 id 会被兜底收走, 而不是把页面打挂', () => {
+    // 这次重做把 overview / identity / personality / life / skills / activity 合并成了
+    // 新的八个页。收藏夹里那些旧链接点进来必须仍然能用 —— 落到默认页, 而不是报错。
+    for (const old of ['overview', 'identity', 'personality', 'life', 'skills', 'activity']) {
+      expect(tabOf(old)).toBe(DEFAULT_TAB)
+    }
   })
 })
 
@@ -38,23 +52,31 @@ describe('标签页与面板表', () => {
     expect(new Set(ids).size).toBe(ids.length)
   })
 
-  it('空标签页必须是**登记过的**那几个 —— 否则会出现点进去什么都没有的一页', () => {
-    for (const t of AGENT_TABS) {
-      if (COMPONENT_TABS.includes(t.id)) {
-        expect(sectionsOf(t.id), `${t.id} 既在 COMPONENT_TABS 里又有面板`).toEqual([])
-        continue
-      }
-      expect(sectionsOf(t.id).length, `${t.id} 是空的却没登记`).toBeGreaterThan(0)
+  it('纯组件页在表里必须是空的 —— 否则那几块永远画不出来', () => {
+    for (const id of COMPONENT_TABS) {
+      expect(sectionsOf(id), `${id} 既在 COMPONENT_TABS 里又有面板`).toEqual([])
     }
   })
 
-  it('COMPONENT_TABS 里的每一个都真的是标签页', () => {
+  it('前缀页在表里必须有面板 —— 否则它就是一个普通组件页, 归类错了', () => {
+    for (const id of PREFIXED_TABS) {
+      expect(sectionsOf(id).length, `${id} 登记成前缀页, 表里却没有面板`).toBeGreaterThan(0)
+    }
+  })
+
+  it('纯组件页与前缀页不许重叠', () => {
     for (const id of COMPONENT_TABS) {
+      expect(PREFIXED_TABS.includes(id), `${id} 同时是两种页`).toBe(false)
+    }
+  })
+
+  it('两类登记里的每一个都真的是标签页', () => {
+    for (const id of [...COMPONENT_TABS, ...PREFIXED_TABS]) {
       expect(AGENT_TABS.some((t) => t.id === id), `${id} 不是标签页`).toBe(true)
     }
   })
 
-  it('每个标签页要么在表里有面板, 要么在 COMPONENT_TABS 里 —— 两者必居其一', () => {
+  it('每个标签页都必须有人认领 —— 组件、前缀组件、或者表里至少有一块', () => {
     for (const t of AGENT_TABS) {
       const inTable = sectionsOf(t.id).length > 0
       const byComponent = COMPONENT_TABS.includes(t.id)
@@ -82,6 +104,19 @@ describe('标签页与面板表', () => {
     // 若这里每次新建数组, useAsync 的 deps 会永远不等, 页面变成无限刷新。
     // 这是"数据表 + 依赖数组"组合最容易踩的一脚。
     expect(sectionsOf('relationship')).toBe(sectionsOf('relationship'))
+  })
+
+  it('看她那四个"此刻"页排在最前, 且顺序固定', () => {
+    // 顺序是这一页的信息架构本身: 她今天怎么过 → 打算做什么 → 手机 → 身体。
+    // 打乱了不会报错, 但"打开她"这件事的第一印象就没了。
+    expect(AGENT_TABS.slice(0, 4).map((t) => t.id))
+      .toEqual(['today', 'plan', 'phone', 'body'])
+  })
+
+  it('原始 JSON 只出现在最后一页', () => {
+    // 「档案」是唯一一个允许堆原始返回体的地方。它不是最后一个的话, 后面那些页
+    // 就会显得"不如档案全", 于是没人再看它们。
+    expect(AGENT_TABS[AGENT_TABS.length - 1].id).toBe('archive')
   })
 })
 

@@ -6,10 +6,22 @@ import { AgentDetail } from '@/pages/AgentDetail'
 import { Applications } from '@/pages/Applications'
 import { ApiPortal } from '@/pages/ApiPortal'
 import { System } from '@/pages/System'
+import { Events } from '@/pages/ops/Events'
+import { Runtime } from '@/pages/ops/Runtime'
 import { SPA_PATHS } from '@/lib/routes'
 
 /**
- * 路由表 —— §19.1 的五个栏目。
+ * 路由表 —— 两拨人共用的一台控制台。
+ *
+ * <h2>两拨人, 不在一页里</h2>
+ *
+ * `/` 与 `/agents/**` 给**看她的人**: 她今天在做什么、她的打算被改动过没有、她的手机
+ * 会不会吵到她、她身体怎么样。`/events`、`/runtime`、`/applications`、`/access`、
+ * `/system` 给**运维与开发**: 线上发生了几件事、认知链花了多少、平台能提供什么、
+ * 凭据在哪填。
+ *
+ * 这两拨人问的问题不一样, 而混在一页里的代价是**双向**的 —— 看她的人被一屏机器名
+ * 劝退, 运维的人在时间轴上找不到"哪一条事件没登记"。所以它们不只是分组, 是两张面。
  *
  * <h2>这一页的路径叫 /access, 而不是 /api</h2>
  *
@@ -38,6 +50,8 @@ export default function App() {
         <Route path={SPA_PATHS.dashboard} element={<Dashboard />} />
         <Route path={SPA_PATHS.agents} element={<Agents />} />
         <Route path={`${SPA_PATHS.agents}/:agentId`} element={<AgentDetail />} />
+        <Route path={SPA_PATHS.events} element={<Events />} />
+        <Route path={SPA_PATHS.runtime} element={<Runtime />} />
         <Route path={SPA_PATHS.applications} element={<Applications />} />
         <Route path={SPA_PATHS.access} element={<ApiPortal />} />
         <Route path={SPA_PATHS.system} element={<System />} />

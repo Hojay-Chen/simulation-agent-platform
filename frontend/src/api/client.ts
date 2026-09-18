@@ -568,8 +568,57 @@ export function listPromises(id: string): Promise<Record<string, unknown>[]> {
   )
 }
 
-export function getLife(id: string): Promise<Record<string, unknown>> {
-  return request<Record<string, unknown>>(`/api/companions/${encodeURIComponent(id)}/life`)
+/**
+ * 一项日程。
+ *
+ * 字段与 `life` 返回体里的 `todayActivities[]` **逐字相同**。这张类型定义是「今天」
+ * 与「计划表」两页的全部输入 —— 那两页都不再自己从 `unknown` 上取字段。
+ */
+export interface PlanActivityView {
+  title: string
+  plannedStart?: string
+  plannedEnd?: string
+  type?: string
+  status?: string
+  /** 这件事要占她多少注意力。它和 `interruptibility` 一起决定她能不能被叫走。 */
+  attentionDemand?: string
+  /** 可打断程度 —— 「计划表」那一页会把它摆出来, 因为它决定"打断她"合不合适。 */
+  interruptibility?: string
+  /** 这段时间她能不能看手机。**不是**手机的免打扰设置, 是她的活动的属性。 */
+  phoneAvailability?: string
+  moodEffect?: string
+  /** 0–1。缺省时界面不画进度条, 而不是画一条 0% 的。 */
+  progress?: number
+  interrupted?: boolean
+  importance?: number
+  emotionalSignificance?: number
+}
+
+export interface LifeView {
+  /** 她的一天的一句话摘要。原样显示 —— 它是认知链写的, 不是前端拼的。 */
+  todaySummary?: string
+  currentActivity?: string
+  /** 处在一天的哪一段(早晨/上午/午后/傍晚/夜里)。 */
+  dayPhase?: string
+  todayActivities?: PlanActivityView[]
+}
+
+/**
+ * 她的一天。
+ *
+ * ⚠️ 返回体里 `todayActivities` 的每一项**没有 id** —— 只有 `title`。身份判定因此
+ * 只能靠标题, 而"两件同名的事"会被当成一件(见 `lib/plan.ts` 的 `snapshot`)。这是
+ * 一个接口缺口, 不是前端将就: 见报告里对 `PlanItem.itemId` 的说明。
+ */
+export function getLife(id: string): Promise<LifeView> {
+  return request<LifeView>(`/api/companions/${encodeURIComponent(id)}/life`)
+}
+
+/** 一条世界事件。`type` 是 `WorldEventType` 里的机器名, 见 `lib/events.ts` 的译表。 */
+export interface WorldEventRow {
+  type: string
+  at?: string
+  payload?: Record<string, unknown> | null
 }
 
 export function listLifeEvents(id: string): Promise<Record<string, unknown>[]> {
@@ -578,8 +627,8 @@ export function listLifeEvents(id: string): Promise<Record<string, unknown>[]> {
   )
 }
 
-export function listWorldEvents(id: string): Promise<Record<string, unknown>[]> {
-  return request<Record<string, unknown>[]>(
+export function listWorldEvents(id: string): Promise<WorldEventRow[]> {
+  return request<WorldEventRow[]>(
     `/api/companions/${encodeURIComponent(id)}/v5/world-events`,
   )
 }
@@ -671,4 +720,185 @@ export interface LapCapability {
  */
 export function getLapCatalog(): Promise<LapCapability[]> {
   return request<LapCapability[]>('/api/lap/catalog')
+}
+
+// ── V2.2 观测面 ─────────────────────────────────────────────────────────────
+//
+// 下面这些是"她的一天 / 计划表 / 手机 / 关系网 / 事件流"五页**实际依赖**的端点。
+// 每一个都在 8091 上真实存在(逐个对着控制器核过), 不是照着设计文档猜的路径。
+//
+// 与之相对, §V2.2 里还有一批控制器**没有**任何 HTTP 面: PlanRevision、
+// ContinuousEffectLedger、整个 phone/ 包(11 个类)、boundary/event/* 的 fabric、
+// Environment、以及 47 条事件目录的 CoreEventCatalog。那部分不在这里编一个函数
+// 出来假装能调 —— 编出来的函数会在页面上变成一条没有解释的 404。它们出现在
+// 各页的「缺口」区块里, 并写清楚缺的是哪个端点。
+
+/** `/api/v10/perception/explain` 的返回体。 */
+export interface PerceptionExplain {
+  eventType: string
+  perception: {
+    level: string
+    score: number
+    strategy: string
+    triggersCognition: boolean
+  }
+  decision: { policy: string; type: string; reason: string }
+  life: { activity: string; attentionDemand: string; sleeping: boolean; description: string }
+  /** 手机那一侧的状态。**这是目前唯一能读到设备状态的端点** —— 见「手机」页。 */
+  device: { notificationMode: string; doNotDisturb: boolean; phoneLocation: string }
+  mind: { focus: number; energy: number }
+  importance: number
+  /** 服务端给的阈值原文。界面**原样显示它**, 而不是只显示自己算的那一档。 */
+  thresholds: string
+}
+
+/**
+ * 推演: 这样一条事件到了她那儿, 会不会被注意到。
+ *
+ * 它是**只读的仿真** —— 不写任何状态, 随便点。这一点很重要: 「手机」页那个
+ * 推演台的全部价值就在于用户可以乱试, 而不用怕打扰到她。
+ *
+ * `importance` 是事件的属性(salience), 她此刻的状态是另一个输入 —— 后者由服务端
+ * 自己从她的 life/device/mind 里取, 前端不需要也不应该自己拼。
+ */
+export function explainPerception(
+  companionId: string,
+  eventType = 'DEVICE_NOTIFICATION',
+  importance = 0.5,
+): Promise<PerceptionExplain> {
+  // eventType 与 importance 都走 query —— 这是 GET, 不是 POST。
+  // 路径里没有 companionId(它是参数不是路径段), 所以必须自己 encode。
+  const q = new URLSearchParams({
+    companionId,
+    eventType,
+    importance: String(importance),
+  })
+  return request<PerceptionExplain>(`/api/v10/perception/explain?${q}`)
+}
+
+export interface InterruptResult {
+  interrupted: boolean
+  title?: string
+  /** 打断之后她的自述。后端在目标不存在时给的是 `reason` 而不是 `explain`。 */
+  explain?: string
+  reason?: string
+}
+
+/**
+ * 手动打断一个进行中的计划 —— **唯一一条能演示 §3.5.6 的写操作**。
+ *
+ * 它是 `/api/admin/**`, 所以 faceOf() 把它判成 studio 面(JWT)。这不是"管理面"
+ * 那把 X-Admin-Key —— 两回事, 别混。它要的是**登录用户的票**, 而服务端会校验
+ * 这个 companion 属于这个用户。
+ *
+ * `title` 是**模糊匹配**(`contains`), 所以传空串会打断列表里的第一条。
+ * 这个语义有点危险, 前端因此必须总是显式传一个 title —— 见「计划表」页。
+ *
+ * 返回里的 `explain` 是这件事在界面上最值钱的部分: 它是她**自己**对"为什么现在
+ * 不写作业了"的解释, 而不是界面上编的一句话。
+ */
+export function interruptPlan(
+  companionId: string,
+  title: string,
+  reason?: string,
+): Promise<InterruptResult> {
+  const q = new URLSearchParams({ title })
+  if (reason) q.set('reason', reason)
+  return request<InterruptResult>(
+    `/api/admin/plan/interrupt/${encodeURIComponent(companionId)}?${q}`,
+    { method: 'POST' },
+  )
+}
+
+/** `/api/v10/relationship/projection` 的返回体 —— 从 Reality Ledger 投影出来的互动事实。 */
+export interface RelationshipProjection {
+  companionId: string
+  summary: {
+    totalEvents: number
+    messagesSentByPerson: number
+    messagesRead: number
+    messagesDeferred: number
+    messagesIgnored: number
+    activitiesEnded: number
+    replyRate: number
+    lastInteractionAt: string | null
+  }
+  reconciled: boolean
+  principle: string
+}
+
+/**
+ * 关系事实层。`userId` 是**必填**参数(控制器上没写 required = false, 缺了直接 400),
+ * 所以调用方必须先从 `whoami()` 拿到自己的 id。
+ *
+ * 为什么这个投影值得单独一页: 它把"她读了几条、推了几条、理了几条"算成事实,
+ * 而**不**问她的记忆怎么说(`principle` 那句话就是这条规则)。所以它是「关系网」
+ * 页上唯一一组可以拿去争论的数 —— 记忆可以记错, 账本不会。
+ */
+export function getRelationshipProjection(
+  companionId: string,
+  userId: string,
+): Promise<RelationshipProjection> {
+  const q = new URLSearchParams({ companionId, userId })
+  return request<RelationshipProjection>(`/api/v10/relationship/projection?${q}`)
+}
+
+/** 一条待执行的排程动作。 */
+export interface ScheduledAction {
+  type?: string
+  executeAt?: string
+  payload?: unknown
+  retry?: number
+}
+
+/** 她按计划表排下的、还没到点或还没执行完的动作。 */
+export function listScheduled(id: string): Promise<ScheduledAction[]> {
+  return request<ScheduledAction[]>(`/api/companions/${encodeURIComponent(id)}/v5/scheduled`)
+}
+
+/** 一条"她决定待会儿再看"的消息。 */
+export interface PendingMessage {
+  messageId?: string
+  /**
+   * 消息正文。
+   *
+   * ⚠️ 这是**全文**, 不是摘要 —— 它是这个返回体里唯一一处正文出现在"她还没回"的
+   * 上下文里。原因是 `PendingMessageService` 存的就是她自己决定推迟时已经看过的那条,
+   * 所以它不算泄漏。
+   *
+   * 但它**只能出现在运维面**。看她那一侧的页面永远不许渲染这个字段: 那条路径一旦
+   * 打开, "正文只在她主动去看的时候才进入她"这句话就不成立了 —— 而那是整个产品
+   * 唯一一条不能破的规则。见 `src/lib/events.ts` 里那五级台阶。
+   */
+  content?: string
+  nextReviewAt?: string
+  reason?: string
+}
+
+export function listPendingMessages(id: string): Promise<PendingMessage[]> {
+  return request<PendingMessage[]>(`/api/companions/${encodeURIComponent(id)}/v5/pending-messages`)
+}
+
+/** V11 送达主链的 shadow 对比。 */
+export interface V11ShadowView {
+  enabled?: boolean
+  shadow?: boolean
+  overall?: Record<string, unknown>
+  thisCompanion?: Record<string, unknown>
+  recent?: unknown[]
+  /** 未启用时服务端会塞一句话进来 —— 读到全 0 不等于"没有分歧"。 */
+  note?: string
+  turns?: Record<string, unknown>
+  cognition?: Record<string, unknown>
+}
+
+export function getV11(id: string): Promise<V11ShadowView> {
+  return request<V11ShadowView>(`/api/companions/${encodeURIComponent(id)}/v5/v11`)
+}
+
+/** 注册进这个 agent 的名字 —— 认知链上真正在跑的处理器。 */
+export function getRegisteredAgents(id: string): Promise<{ registered: string[] }> {
+  return request<{ registered: string[] }>(
+    `/api/companions/${encodeURIComponent(id)}/v5/agents`,
+  )
 }
