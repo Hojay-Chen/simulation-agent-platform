@@ -547,6 +547,65 @@ class PlanReplanningTest {
         }
     }
 
+    // ────────── 三、封闭集合的绊线: 加第七种改动时必须有人做决定 ──────────
+
+    /**
+     * {@code PlanMutation} 是 sealed, 但 <b>sealed 本身不产生穷尽性检查</b> ——
+     * 检查来自模式匹配 {@code switch}, 而它在 Java 17 还是 preview, 本仓库用不了。
+     * 于是 {@code PlanBoard.applyOne} 写的是一条 {@code instanceof} 链, 兜底落在运行期一条 WARN。
+     *
+     * <p>这条测试不是"验证功能", 它是一条<b>绊线</b>: 加第七种改动时它会让构建失败,
+     * 从而逼着那个人去回答"applyOne 里怎么处理它"。
+     *
+     * <p>没有它的话, 加了新成员却忘了改 applyOne 的结果是
+     * <b>构建绿的、测试绿的</b>, 只有线上日志里多一行。
+     */
+    @Test
+    @DisplayName("改动类型是封闭的六种 —— 加第七种时这里必须先失败")
+    void 改动类型是封闭的六种() {
+        Class<?>[] permitted = PlanMutation.class.getPermittedSubclasses();
+
+        assertNotNull(permitted,
+                "PlanMutation 不再是 sealed 了 —— 那意味着它不再是一个封闭集合, "
+                        + "而'重排只能由这几种操作构成'这条推理随之失效");
+
+        assertEquals(6, permitted.length,
+                "PlanMutation 现在有 " + permitted.length + " 种改动, 而这个数字被写死成 6。"
+                        + "如果你是刚加了第七种: 请<先>去 PlanBoard.applyOne 补上对应分支, "
+                        + "<再>回来改这个数字 —— 这个顺序是刻意的, "
+                        + "因为 applyOne 的兜底只是一条 WARN, 它不会替你拦住任何事");
+    }
+
+    /**
+     * "每一种改动都必须说清为什么" —— 这条规则原本只写在 {@code PlanMutation.reason()} 的注释里,
+     * 而注释不会拦住任何人。
+     *
+     * <p>这里把它变成可执行的: 每一个成员都必须有一个叫 {@code reason} 的组件。
+     * 顺带钉住"必须是 record" —— 改动一旦可变, "这条改动是什么"就不再是一个
+     * 可以拿去比较、复现、回放的值, 而回放是这个包的全部价值所在。
+     */
+    @Test
+    @DisplayName("每一种改动都必须带 reason —— 包括将来新加的那种")
+    void 每一种改动都必须带理由() {
+        for (Class<?> variant : PlanMutation.class.getPermittedSubclasses()) {
+
+            assertTrue(variant.isRecord(),
+                    variant.getSimpleName() + " 不是 record —— 改动一旦可变, "
+                            + "'这条改动是什么'就不再是一个能拿去比较、复现、回放的值");
+
+            List<String> components = new ArrayList<>();
+            for (java.lang.reflect.RecordComponent component : variant.getRecordComponents()) {
+                components.add(component.getName());
+            }
+
+            assertTrue(components.contains("reason"),
+                    variant.getSimpleName() + " 的组件是 " + components
+                            + ", 里面没有 reason —— 行为分析的时间轴上那一格会是空的。"
+                            + "理由不是可选的: 用户追问'你不是说要去跑步吗'时, "
+                            + "系统能给出的答案只能来自这里");
+        }
+    }
+
     /** 一个不需要上下文的意图 —— 本测试测的是重排机制, 不是领域知识。 */
     private record FixedIntent(PlanIntent.IntentId id, String description) implements PlanIntent {
 
