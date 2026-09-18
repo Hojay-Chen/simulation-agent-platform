@@ -46,6 +46,9 @@ app:
     behavior-tick-cron: 0 0 0 1 1 *
     # LAP v1 幂等调用回收 —— 测试里必须钉死, 否则 context 启动后会真的每 5 分钟扫一次库
     invocation-reaper-cron: 0 0 0 1 1 *
+    # V11 信箱维护(回收租约/重放/过期清理)。测试里必须钉死: 它会真的重放 PENDING 行,
+    # 于是"暂停中的 agent 一条都不处理"这条用例会被后台任务替它处理掉, 断时红时绿。
+    inbox-maintenance-cron: 0 0 0 1 1 *
 
   # V10 §5 测试环境关闭拟人化层(单测断言预期原始输出, 不带错字/犹豫后缀)
   v10:
