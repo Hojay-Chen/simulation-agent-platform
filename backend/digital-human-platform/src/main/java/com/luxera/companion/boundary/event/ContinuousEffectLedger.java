@@ -1,5 +1,7 @@
 package com.luxera.companion.boundary.event;
 
+import com.luxera.companion.registry.DomainType;
+import com.luxera.companion.registry.DomainTypeRegistry;
 import lombok.extern.slf4j.Slf4j;
 
 import java.time.Instant;
@@ -169,9 +171,10 @@ public class ContinuousEffectLedger {
             log.debug("[EffectLedger] 撤销 {}:{} 时账上没有这条 —— 忽略", channel, cancellationKey);
             return null;
         }
-        // 复用上一条的类型标识, 让"谁撤销了谁"在历史里可追溯
-        StateEffectEvent origin = entries.get(previous).event();
-        return book(new Cancellation(origin, channel, cancellationKey, at), at);
+        // 复用上一条的类型标识, 让"谁撤销了谁"在历史里可追溯。
+        // 这里存的是**类型名的字符串**, 不是那个事件对象本身 —— 理由见 Cancellation 的类注释
+        String originalTypeId = entries.get(previous).event().typeId().toString();
+        return book(new Cancellation(channel, cancellationKey, originalTypeId, at), at);
     }
 
     // ─────────────────────────── 结算 ───────────────────────────
@@ -318,8 +321,60 @@ public class ContinuousEffectLedger {
      * <p>它是一个真正的 {@link StateEffectEvent}({@code magnitude = 0}),
      * 因此会走完整的入账流程、被记进历史、能被重放 —— 这与"删掉一条记录"的区别
      * 正是本类要保住的东西。
+     *
+     * <h2>它为什么带着 {@code @DomainType} —— 一条本该能读回来、却读不回来的账</h2>
+     * 这个类型从写下第一天起就有一个静默的缺陷, 值得完整记在这里, 因为它的<b>症状
+     * 与原因离得非常远</b>, 而且它是"新代码还没有装配层"这件事的第一个可见后果。
+     *
+     * <p><b>症状</b>: 她没有脱外套。{@code settle(now)} 算出来的保暖值是对的 ——
+     * 撤销的 {@code magnitude = 0} 确实把那条影响挤掉了。但重启之后, 数据库里那一行的
+     * {@code effect_namespace} 是 {@code _untyped}、{@code effect_json} 里只有一串
+     * 字段名, 于是 {@code EffectLedgerStore.readAll} 认不出它的类型, 用
+     * {@link com.luxera.companion.persistence.store.OpaqueEffect} 顶上, 并且每次恢复都打一条
+     * "N 条账目的类型认不出来"的 WARN。<b>加法仍然正确</b>(替身的四个数是从真列上读的),
+     * 所以没有任何断言会红 —— 丢掉的只有<b>解释</b>: "她 12:30 之后为什么开始觉得冷"
+     * 这个问题在账本里再也找不到"12:30 她脱了外套"这个答案, 而那正是本类存在的理由
+     * (见上游 {@code cancel} 的注释"为什么撤销也是入账, 而不是删除")。
+     *
+     * <p><b>原因</b>: 这个记录类没有 {@link DomainType} 注解, 因此没有进
+     * {@link com.luxera.companion.registry.DomainTypeRegistry} ——
+     * {@code PolymorphicSerializer.toMap} 找不到它的类型名, 就往 JSON 里写一个
+     * {@code _untyped} 标记加一条 WARN。而 {@link com.luxera.companion.registry.CoreEventCatalog}
+     * 里<b>早就登记了</b> {@code system.effect-cancelled.v1}(producer 写的正是本类),
+     * 也就是说: <b>目录说它有, 代码里没人声明它</b>。两者不一致, 而目录是对的。
+     *
+     * <h2>为什么载荷里是 {@code originalTypeId} 字符串, 而不是那个事件对象</h2>
+     * 最初的写法是 {@code StateEffectEvent origin}, 它更"类型安全" —— 而这正是它错的地方:
+     * <ul>
+     *   <li><b>它读不回来。</b> {@code PolymorphicSerializer.toMap} 用
+     *       {@code mapper.convertValue(value, LinkedHashMap)} 把对象摊平, 而<b>嵌套对象不会被
+     *       打上 {@code _type} 标记</b>。于是那个 {@code origin} 在 JSON 里只是一个没有身份
+     *       的字段袋子, 读回来时无法知道该 new 哪个类 —— 即便本类注册了也一样;</li>
+     *   <li><b>它超出需要。</b> 撤销只用到 {@code origin} 的<b>类型名</b>(且只用在
+     *       {@code describe()} 里 —— 见下面那行), 而类型名是一个字符串就能完整表达的东西。
+     *       把整个对象拖进历史, 等于把一条"她脱了外套"的记录, 写成"她脱了一件
+     *       {@code clothing.down-jacket}, 品牌、厚度、保暖系数一并附上" ——
+     *       而撤销并不关心那些, 它们另有自己的账目;</li>
+     *   <li><b>它让重放依赖一个更大的闭包。</b> 撤销行要能读回来, 就要求
+     *       <b>原来那个事件的类型</b>也还注册着。用一个字符串, 撤销行的可读性只取决于
+     *       它自己 —— 这在"三方插件被卸载"这个真实场景里是决定性的:
+     *       插件走了, 它那条保暖影响读不回来(合理, 用替身), 但"她后来脱了外套"这件事
+     *       仍然读得回来, 因为那句话不依赖插件。</li>
+     * </ul>
+     *
+     * <p>代价是 {@code describe()} 里少了一次对象解引用, 换成一次字符串拼接 ——
+     * 而 {@code describe()} 本来就是给人读的, 拼出来的东西一字不差。
+     *
+     * <h2>{@code at} 为什么必须在载荷里</h2>
+     * 因为重放要从载荷 new 出这个对象, 而 {@code occurredAt()} 是
+     * {@link StateEffectEvent} 的契约成员。它同时也在 {@code started_at} 列上
+     * (那一列存的是 {@code book} 收到的入账时刻, 两者的值在写入点必然相等 ——
+     * 见 {@code EffectLedgerStore.newRecord} "四个值有两个来源"那段), 但<b>列是给查询用的,
+     * 载荷是给重建用的</b>, 两者不能互相替代: 一个只读列的重放会在"列被人工改过"时
+     * 悄悄走样, 而一个只读载荷的查询要在内存里扫全表。
      */
-    record Cancellation(StateEffectEvent origin, String channel, String cancellationKey,
+    @DomainType("system.effect-cancelled")
+    record Cancellation(String channel, String cancellationKey, String originalTypeId,
                         Instant at) implements StateEffectEvent {
 
         static final EventTypeId TYPE = EventTypeId.of("system", "effect-cancelled");
@@ -356,7 +411,7 @@ public class ContinuousEffectLedger {
 
         @Override
         public String describe() {
-            return "撤销 " + channel + ":" + cancellationKey + " (原 " + origin.typeId() + ")";
+            return "撤销 " + channel + ":" + cancellationKey + " (原 " + originalTypeId + ")";
         }
     }
 
@@ -370,6 +425,42 @@ public class ContinuousEffectLedger {
         s.totals().forEach((ch, v) -> sb.append(ch).append('=').append(String.format("%.3f", v))
                 .append(' '));
         return sb.toString().trim();
+    }
+
+    /**
+     * <b>本类产生的类型, 由本类自己登记</b> —— 装配层调用。
+     *
+     * <h2>为什么登记这件事归生产者, 而不是归装配层</h2>
+     * {@link Cancellation} 是包级私有的, 它的名字、它的载荷形状、它将来会不会变成两个
+     * 类型, 只有本类知道。装配层若要从外面登记它, 只有两条路, 而两条都是错的:
+     * <ul>
+     *   <li><b>把它改成 public</b> —— 于是"撤销"从一个实现细节变成了平台 API,
+     *       而它并不想被外部 new。可见性的放宽是不可逆的: 一旦有人 import 了它,
+     *       再收回去就是一次破坏性变更;</li>
+     *   <li><b>在装配层写一个字符串名字</b>({@code registry.register("system.effect-cancelled.v1", ...)})
+     *       —— 于是类型名有了两份, 一份在注解里、一份在装配层。两份迟早会不一致,
+     *       而那种不一致的表现是"某条历史读不出来", 与原因隔了十万八千里。</li>
+     * </ul>
+     * 让<b>同一个文件</b>同时持有这两个事实(类型叫什么、它长什么样), 它们就不可能不一致。
+     *
+     * <h2>为什么是"生产者登记"而不是"扫描 classpath"</h2>
+     * 因为{@link com.luxera.companion.registry.DomainTypeRegistry} 的类注释把话说死了:
+     * <b>"装配顺序可控(自己的先注册), 而 classpath 扫描顺序不可控"</b>, 重名冲突的结果
+     * 不该取决于 jar 的加载次序。一个扫描式装配会把这个判断推翻, 而且会让
+     * {@code unregistered(...)} 那道自检<b>永远为空</b> —— 它本来是用来发现"带了类却忘了登记"的,
+     * 扫描把"忘没忘"这件事从存在层面消掉了, 于是它再也不会说话。
+     *
+     * <p>代价是装配层要维护一张清单, 而清单会腐烂。抵住它的是那条已经存在的架构守卫
+     * 思路: <b>用一个测试断言"核心包里每一个 {@code @DomainType} 类都被登记了"</b> ——
+     * 于是"忘了写一行"在 CI 上是一次红灯, 而不是半年后的一次重放失败。
+     *
+     * @param registry 装配层正在拼的那个注册表
+     * @return 登记了几条 —— 装配层把它汇总进启动日志, 让"这个 agent 的世界里有多少种事件"可读
+     */
+    public static int registerTypes(DomainTypeRegistry registry) {
+        Objects.requireNonNull(registry, "注册表不能为空");
+        registry.register(Cancellation.class);
+        return 1;
     }
 
     /** 便捷: 空账本。 */

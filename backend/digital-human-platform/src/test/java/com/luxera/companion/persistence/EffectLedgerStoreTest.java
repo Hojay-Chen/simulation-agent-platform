@@ -194,6 +194,58 @@ class EffectLedgerStoreTest {
                 "重放完再落一次库: 0 新插入 + 0 条新失效");
     }
 
+    /**
+     * 撤销那一行必须**带着自己的类型**落库、原样读回来。
+     *
+     * <h2>它和上面那条用例差在哪 —— 一个只有数字的断言证明不了这件事</h2>
+     * {@link #显式撤销在重放里自然重现()} 已经断言了"撤销之后净效应是 0"。
+     * 而那个断言在<b>类型丢失的情况下同样成立</b>: {@code OpaqueEffect} 的四个数
+     * (magnitude / channel / key / expiresAt)全部从<b>真列</b>上读, 加法因此是正确的。
+     * 换句话说: <b>她会不会冷, 由列决定; 她为什么冷, 由类型决定</b>。
+     * 上面那条测的是前者, 这一条测的是后者 —— 而"她为什么开始觉得冷"正是
+     * {@code ContinuousEffectLedger} 存在的理由(见其类注释"撤销也是入账")。
+     *
+     * <h2>这个缺陷为什么能活到今天</h2>
+     * 因为它的三个症状都很容易被解释成别的东西: 一条 WARN
+     * (被当成"三方插件没注册"的常规噪音)、一份读得出来的数字(对的)、
+     * 以及一个只在调试时才被问起的问题("她为什么冷")。它是<b>静默</b>的:
+     * 没有任何断言、任何异常、任何指标会因为类型丢失而变红。
+     * 所以它需要一条专门为它写的用例 —— 就像这一条。
+     */
+    @Test
+    @DisplayName("撤销那一行带着 system.effect-cancelled 落库, 而不是退化成 _untyped")
+    void 撤销的类型经得起重启() {
+        ContinuousEffectRecordRepository repo = FakeRepositories.continuousEffects();
+        EffectLedgerStore store = new EffectLedgerStore(repo, PersistenceFixtures.codec());
+
+        ContinuousEffectLedger ledger = ContinuousEffectLedger.empty();
+        ledger.book(PersistenceFixtures.FixtureWarmth.of(0.85, "body.warmth", "coat",
+                T0.plusSeconds(7200)), T0);
+        ledger.cancel("body.warmth", "coat", T0.plusSeconds(300));
+        store.snapshot(ledger, HUMAN);
+
+        // 写侧: 三列元数据必须被真的填上。没有这三列, 读侧连"该 new 哪个类"都无从问起
+        ContinuousEffectRecord cancellationRow = repo.findByHumanIdOrderBySequenceAsc(HUMAN).get(1);
+        assertEquals("system", cancellationRow.getEffectNamespace(),
+                "撤销的命名空间不该是 _untyped —— 它是平台内建事件, 有确定的域");
+        assertEquals("effect-cancelled", cancellationRow.getEffectName());
+        assertEquals(1, cancellationRow.getEffectVersion());
+
+        // 读侧: 它必须变回一个**认得出类型**的事件, 而不是替身
+        ContinuousEffectLedger restored = store.restore(HUMAN, LATER);
+        StateEffectEvent replayed = restored.history().get(1).event();
+
+        assertFalse(replayed instanceof OpaqueEffect,
+                "撤销那一行退化成替身了 —— 加法仍然对, 但\"她 12:30 之后为什么开始觉得冷\""
+                        + "这个问题在账本里就再也没有答案了");
+        assertEquals("system.effect-cancelled.v1", replayed.typeId().toString(),
+                "类型名是它被读回来的唯一线索, 也是 CoreEventCatalog 里登记的那一个");
+        assertTrue(replayed.describe().contains(PersistenceFixtures.WARMTH_TYPE),
+                "被撤销的是哪一类影响, 必须能从这一行本身读出来 —— 且**只**依赖这一行: "
+                        + "即便 fixture.warmth 那个类型被卸载了, 这句话依然成立。实际: "
+                        + replayed.describe());
+    }
+
     @Test
     @DisplayName("来源事件 id 只在首次插入时写入 —— 增量写不碰它")
     void 来源事件_id_不会被第二次落库抹掉() {

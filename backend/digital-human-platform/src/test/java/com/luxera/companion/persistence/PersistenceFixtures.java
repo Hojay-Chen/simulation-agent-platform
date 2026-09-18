@@ -1,5 +1,6 @@
 package com.luxera.companion.persistence;
 
+import com.luxera.companion.boundary.event.ContinuousEffectLedger;
 import com.luxera.companion.boundary.event.EventTypeId;
 import com.luxera.companion.boundary.event.StateEffectEvent;
 import com.luxera.companion.human.life.plan.PlanConstraint;
@@ -242,6 +243,11 @@ final class PersistenceFixtures {
         registry.register(FixtureWarmth.class);
         registry.register(FixtureChill.class);
         registry.register(PlanEvents.ItemDue.class);
+        // 平台内建类型走**生产者自己的登记入口**, 而不是在这里手写它的类名 ——
+        // Cancellation 是包级私有的, 从本包根本写不出 ContinuousEffectLedger.Cancellation.class。
+        // 这一行同时是那条约定的样板: 每一个产出核心事件的类都提供 registerTypes(registry),
+        // 装配层把它们串起来, 于是"类型叫什么"与"它长什么样"永远在同一个文件里。
+        ContinuousEffectLedger.registerTypes(registry);
         return registry;
     }
 

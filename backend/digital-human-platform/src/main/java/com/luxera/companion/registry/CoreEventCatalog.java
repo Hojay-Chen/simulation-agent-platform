@@ -722,7 +722,8 @@ public final class CoreEventCatalog {
 
             def("system.effect-cancelled.v1")
                     .category(Category.STATE_EFFECT).channel(Channels.COMFORT)
-                    .payload("channel: String, cancellationKey: String, originalTypeId: String")
+                    .payload("channel: String, cancellationKey: String, originalTypeId: String, "
+                            + "at: Instant")
                     .semantics("一条持续影响被显式撤销(脱掉衣服、雨停了)。"
                             + "<b>它不是删除, 是一次新的入账</b>(magnitude = 0) —— "
                             + "因为“她 12:30 之后为什么开始觉得冷”这个问题, "
