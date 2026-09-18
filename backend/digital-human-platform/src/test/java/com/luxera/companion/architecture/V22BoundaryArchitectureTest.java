@@ -15,6 +15,7 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
+import java.util.Map;
 import java.util.List;
 import java.util.Set;
 import java.util.regex.Pattern;
@@ -423,6 +424,128 @@ class V22BoundaryArchitectureTest {
                         + " DeviceApplication 接口的一个实现类, 由平台方自己提供并注册, "
                         + "我们的核心包里不该有任何一个平台的名字:\n  "
                         + String.join("\n  ", offenders));
+    }
+
+    // ─────────────────────────── 四、目录必须是完整的 ───────────────────────────
+
+    /**
+     * 目录里那些域 —— 它们里面的事件类型<b>必须</b>在 {@code CoreEventCatalog} 里有一条。
+     *
+     * <p>判断"一个命名空间属不属于核心"用的就是目录自己的 {@code namespaces()},
+     * 而不是在这里再抄一份清单 —— 后者会随目录变化而失修, 而失修的守卫比没有更糟
+     * （它给人"这里查过了"的错觉）。
+     */
+    private static final List<String> CORE_NAMESPACES =
+            List.of("environment", "device", "body", "mind", "plan", "object", "system");
+
+    /**
+     * 声明成 {@link com.luxera.companion.boundary.event.EventTypeId}、但<b>不是事件类型</b>的那几个。
+     *
+     * <p>{@code EventTypeId.of("device", "phone")} 这样的写法标识的是<b>对象类型</b>
+     * （手机这个对象类型、环境这个对象类型、地点这个对象类型），不是"发生了一件事"。
+     * 本类复用 {@code EventTypeId} 这个值对象来表达"一个带命名空间与版本的标识" ——
+     * 它恰好就是这个形状，而复用一个值对象不该被误读成一次类型混淆。
+     *
+     * <p>这一条是<b>显式名单而不是启发式判断</b>，因为两者在语法上长得一模一样，
+     * 没有任何结构特征能把它们分开。名单的代价是新加一个对象类型标识时这里会红一次 ——
+     * 而那正是想要的：它逼着加的人停下来想一秒"我加的到底是不是一个事件"。
+     *
+     * <p>{@code world.*} 那两个其实会被 {@link #CORE_NAMESPACES} 顺带滤掉，
+     * 放在这里是为了让"哪些不是事件"这件事在一处说得完整。
+     */
+    private static final List<String> OBJECT_TYPE_IDS =
+            List.of("device.phone.v1", "world.environment.v1", "world.place.v1");
+
+    private static final Pattern DECLARED_OF = Pattern.compile(
+            "EventTypeId\\.of\\(\\s*\"([a-z0-9.-]+)\"\\s*,\\s*\"([a-z0-9-]+)\"\\s*(?:,\\s*(\\d+)\\s*)?\\)");
+    private static final Pattern DECLARED_PARSE = Pattern.compile(
+            "EventTypeId\\.parse\\(\\s*\"([a-z0-9.-]+\\.v\\d+)\"\\s*\\)");
+    private static final Pattern DECLARED_ANNOTATION = Pattern.compile(
+            "@DomainType\\(\\s*\"([a-z0-9.-]+)\"\\s*\\)");
+
+    /**
+     * <b>代码里声明了的核心事件类型，一条都不能不在目录里。</b>
+     *
+     * <h2>为什么需要这一条</h2>
+     * 用户对 V2.1 的批评是"没定义 eventtype 有哪些枚举值，不了解的人看完完全不知道
+     * 都有哪些 event"。V2.2 的回应是给出一份完整目录 —— 而一份目录要能兑现那句话，
+     * 它就必须<b>真的是完整的</b>。
+     *
+     * <p>而"完整"这件事没有任何机制在保：写事件类的人在自己的文件里声明一个
+     * {@code TYPE}，目录在另一个文件里。两边各自都编译得过，测试也全绿 ——
+     * 于是漏掉的那条只会在某天有人问"她怎么从来没闻到过味道"时才被发现。
+     * 这不是假设：{@code device.phone.sound-emitted.v1} 就是这么漏掉的
+     * （扬声器发了一个声音，媒体播放用的一直是它，而它不在这张表里）。
+     *
+     * <h2>为什么规则是单向的</h2>
+     * 只查"代码 → 目录"，不查"目录 → 代码"。反方向是<b>合法</b>的：
+     * 目录里可以有代码还没实现的类型（{@code system.clock-tick.v1} 标着"留给将来"），
+     * 那是这份目录作为<b>设计声明</b>的一部分 —— 它要先说出"这里有这么一件事"，
+     * 实现才有着落。要求两向一致会把这个顺序倒过来，逼着人先写代码再补设计。
+     *
+     * <h2>它能查什么、不能查什么</h2>
+     * 它扫的是<b>源码文本里的字符串字面量</b>。所以
+     * {@code EventTypeId.of(SOME_CONSTANT, "x")} 这种把命名空间放进常量的写法它看不见 ——
+     * 今天的所有声明都是字面量，所以这条限制不产生漏报；而一个漏报的守卫，
+     * 比一个会误报的守卫安全得多（后者会让人开始往白名单里加东西）。
+     */
+    @Test
+    void everyCoreEventTypeTheCodeDeclaresIsInTheCatalogue() {
+        Set<String> declared = new LinkedHashSet<>();
+        Map<String, String> where = new java.util.LinkedHashMap<>();
+        for (Source source : sources()) {
+            String text = code(source.text);
+            var of = DECLARED_OF.matcher(text);
+            while (of.find()) {
+                String id = of.group(1) + "." + of.group(2) + ".v" + (of.group(3) == null ? "1" : of.group(3));
+                declared.add(id);
+                where.putIfAbsent(id, source.name);
+            }
+            var parsed = DECLARED_PARSE.matcher(text);
+            while (parsed.find()) {
+                declared.add(parsed.group(1));
+                where.putIfAbsent(parsed.group(1), source.name);
+            }
+            var annotated = DECLARED_ANNOTATION.matcher(text);
+            while (annotated.find()) {
+                String id = annotated.group(1) + ".v1";
+                declared.add(id);
+                where.putIfAbsent(id, source.name);
+            }
+        }
+
+        Set<String> excused = new LinkedHashSet<>();
+        declared.removeIf(id -> {
+            if (OBJECT_TYPE_IDS.contains(id)) {
+                excused.add(id);
+                return true;
+            }
+            return false;
+        });
+        assertNoStaleLegacyExcuses(OBJECT_TYPE_IDS, excused);
+
+        Set<String> known = new LinkedHashSet<>();
+        for (com.luxera.companion.boundary.event.EventTypeId id :
+                com.luxera.companion.registry.CoreEventCatalog.typeIds()) {
+            known.add(id.toString());
+        }
+
+        List<String> missing = new ArrayList<>();
+        for (String id : declared) {
+            String namespace = id.substring(0, id.lastIndexOf('.'));
+            String domain = namespace.contains(".") ? namespace.substring(0, namespace.indexOf('.')) : namespace;
+            if (!CORE_NAMESPACES.contains(domain)) {
+                continue;   // 插件与应用自己域里的事件 —— 它们本来就不该进核心目录
+            }
+            if (!known.contains(id)) {
+                missing.add(id + "   (声明在 " + where.get(id) + ")");
+            }
+        }
+        assertTrue(missing.isEmpty(),
+                "有事件类型在代码里声明了、却不在 CoreEventCatalog 里 —— 于是那份"
+                        + "“这个世界里能发生哪些事”的清单是假的, 而它恰恰是 V2.2 对"
+                        + "“不知道都有哪些 event”这个批评的回应。请把它们登记进目录:\n  "
+                        + String.join("\n  ", missing));
     }
 
     // ─────────────────────────── 夹具 ───────────────────────────

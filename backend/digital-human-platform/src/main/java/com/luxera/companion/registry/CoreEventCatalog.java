@@ -402,6 +402,19 @@ public final class CoreEventCatalog {
                     .consumer("RealtimeEventQueue → AttentionService")
                     .build(),
 
+            def("device.phone.sound-emitted.v1")
+                    .category(Category.SENSORY).modality(Modalities.AUDITORY)
+                    .payload("phoneId: String, channel: String, soundProfile: String, "
+                            + "effectiveVolume: double, durationMillis: long, occurredAt: Instant")
+                    .semantics("<b>扬声器发出了一个声音</b> —— 一个纯粹的物理事实。"
+                            + "它是“没有专属语义事件的那一路”的兜底, 当前由媒体播放使用; "
+                            + "通知/来电/闹钟各自有专属事件(上面三条), 因为“为什么响”决定了她该怎么反应。"
+                            + "载荷里<b>没有来源</b> —— 因为她听见的只有声音; "
+                            + "“那是谁打的电话”要等她去看, 而那一步走的是 chat.read-messages")
+                    .producer("world.device.phone.AudioSystem")
+                    .consumer("RealtimeEventQueue → AuditoryChannel")
+                    .build(),
+
             def("device.phone.screen-changed.v1")
                     .category(Category.SENSORY).modality(Modalities.VISUAL)
                     .payload("phoneId: String, screenOn: boolean, brightness: double")
