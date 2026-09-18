@@ -35,6 +35,11 @@ public class DiagnosticController {
     private final com.luxera.companion.plan.PlanRepository planRepository;
     private final com.luxera.companion.runtime.v11.V11RuntimeSwitch v11Switch;
     private final com.luxera.companion.runtime.v11.V11DeliveryShadow v11Shadow;
+    private final com.luxera.companion.runtime.v11.V11TurnsSwitch turnsSwitch;
+    private final com.luxera.companion.runtime.v11.V11TurnPath turnPath;
+    private final com.luxera.companion.mind.MindStateService mindStates;
+    private final com.luxera.companion.runtime.v11.V11CognitionSwitch cognitionSwitch;
+    private final com.luxera.companion.runtime.v11.CognitionDecisionRecorder cognitionRecorder;
 
     public DiagnosticController(CurrentUser currentUser, CompanionService companionService,
                                   AgentTraceService traceService, ScheduledActionService scheduledActionService,
@@ -44,7 +49,12 @@ public class DiagnosticController {
                                   com.luxera.companion.cognitive.CognitiveSessionRepository cognitiveSessionRepository,
                                   com.luxera.companion.plan.PlanRepository planRepository,
                                   com.luxera.companion.runtime.v11.V11RuntimeSwitch v11Switch,
-                                  com.luxera.companion.runtime.v11.V11DeliveryShadow v11Shadow) {
+                                  com.luxera.companion.runtime.v11.V11DeliveryShadow v11Shadow,
+                                  com.luxera.companion.runtime.v11.V11TurnsSwitch turnsSwitch,
+                                  com.luxera.companion.runtime.v11.V11TurnPath turnPath,
+                                  com.luxera.companion.mind.MindStateService mindStates,
+                                  com.luxera.companion.runtime.v11.V11CognitionSwitch cognitionSwitch,
+                                  com.luxera.companion.runtime.v11.CognitionDecisionRecorder cognitionRecorder) {
         this.currentUser = currentUser;
         this.companionService = companionService;
         this.traceService = traceService;
@@ -57,6 +67,11 @@ public class DiagnosticController {
         this.planRepository = planRepository;
         this.v11Switch = v11Switch;
         this.v11Shadow = v11Shadow;
+        this.turnsSwitch = turnsSwitch;
+        this.turnPath = turnPath;
+        this.mindStates = mindStates;
+        this.cognitionSwitch = cognitionSwitch;
+        this.cognitionRecorder = cognitionRecorder;
     }
 
     private void requireOwned(String userId, String companionId) {
@@ -156,7 +171,76 @@ public class DiagnosticController {
             // 说出来比返回一堆 0 好: 否则读到全 0 的人会以为"没有分歧", 而事实是"没在看"
             out.put("note", "V11 送达主链未启用(app.v11.runtime.enabled/shadow 皆为 false), 上面的数字无意义");
         }
+        out.put("turns", turns(companionId));
+        out.put("cognition", cognition());
         return out;
     }
 
+    /**
+     * V11 §25.2 —— <b>认知决策的观测</b>(Phase 4 的切流判据)。
+     *
+     * <p>与上面两节并列的第三个问题: "她决定做不做什么, 与老链差多少"。
+     * 决定能不能切流的<b>就是这一个数字</b> —— {@code wouldSilence} 的占比:
+     * 切流之后, 那些本来会回、而新决策说"不回"的场合会真的安静下来。
+     *
+     * <p>这里刻意把三件事分开列, 而不是合成一个"一致率":
+     * <pre>
+     *   wouldSilence  老链回了、新决策不回   ← 切流后她会安静这么多(必须盯着的)
+     *   wouldSpeak    新决策回、老链没回     ← 切流后她会多说这些(通常很小)
+     *   byReason      理由分布              ← 安静的原因是"忙"还是"没看到", 处置完全不同
+     * </pre>
+     * 一致率会把这三种混在一起: 99% 的一致率既可能是"几乎没差别", 也可能是
+     * "3% 的场合会安静下来但被大分母稀释了" —— 而后者足以让 53 个 agent 集体闭嘴。
+     */
+    private Map<String, Object> cognition() {
+        Map<String, Object> c = new LinkedHashMap<>();
+        c.put("enabled", cognitionSwitch.isEnabled());
+        c.put("shadow", cognitionSwitch.isShadow());
+        // 只看 enabled: 认知决策挂在回复路径上, 不依赖 runtime 主链
+        // (对比 turns.effective —— 那个必须同时看 runtime)
+        c.put("effective", cognitionSwitch.isEffective());
+        c.put("stats", cognitionRecorder.stats());
+        if (!cognitionSwitch.isActive()) {
+            c.put("note", "认知决策未启用(app.v11.cognition.enabled/shadow 皆为 false), 上面的数字无意义");
+        } else if (!cognitionSwitch.isEnabled()) {
+            c.put("note", "shadow 期: 决策只记账不生效。wouldSilence 的占比就是切流后她会安静下来的比例 —— "
+                    + "这个数字大到某个程度就不是'更真实', 而是'她坏了'。");
+        }
+        return c;
+    }
+
+    /**
+     * V11 §8 —— <b>回合合并的观测</b>。Phase 3 的切流判据就在 {@code messagesPerTurn} 上。
+     *
+     * <p>它和上面那段回答的是两个不同的问题, 所以是两个并列的小节而不是揉进一个:
+     * <ul>
+     *   <li>{@code shadow} 回答"新门会漏掉多少条消息"(Phase 2 的差异)</li>
+     *   <li>{@code turns} 回答"连着来的几句话会被并成几次认知"(Phase 3 的差异)</li>
+     * </ul>
+     * 两者的开关也是分开的, 于是切流那天可以一次只翻一个、各自归因。
+     *
+     * <p>刻意同时给出<b>内存里的计数器</b>与<b>落库的累计值</b>: 前者从这次进程启动算起,
+     * 后者跨重启。只给一个的话, 一次部署就会让"合并率"看起来突然变成 0 或突然翻倍,
+     * 而那个数字正是用来决定要不要切流的。
+     */
+    private Map<String, Object> turns(String companionId) {
+        Map<String, Object> t = new LinkedHashMap<>();
+        t.put("enabled", turnsSwitch.isEnabled());
+        t.put("shadow", turnsSwitch.isShadow());
+        // isEffective 而不是 enabled: turns 长在 V11 送达主链上, runtime 没接管时它只是一行配置
+        t.put("effective", turnsSwitch.isEffective());
+        t.put("window", turnPath.aggregator().window());
+        t.put("sinceStartup", turnPath.aggregator().stats());
+        t.put("openTurns", turnPath.aggregator().openTurnsOf(companionId));
+        t.put("persisted", mindStates.snapshot(companionId).turns());
+        t.put("mind", mindStates.snapshot(companionId).focus());
+        t.put("threads", mindStates.threadsOf(companionId));
+        if (turnsSwitch.isEnabled() && !v11Switch.isEnabled()) {
+            t.put("note", "turns.enabled=true 但 runtime.enabled=false —— 回合合并长在 V11 送达主链上, "
+                    + "今天不会有任何效果。先开 app.v11.runtime.enabled。");
+        } else if (!turnsSwitch.isActive()) {
+            t.put("note", "回合合并未启用(app.v11.turns.enabled/shadow 皆为 false), 上面的数字无意义");
+        }
+        return t;
+    }
 }
