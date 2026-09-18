@@ -58,6 +58,24 @@ subprojects {
             events 'failed'
             exceptionFormat 'full'
         }
+
+        // 测试库可切换: 默认仍是 application-test.yml 里的 companion_test,
+        // 传 -PtestDb=<库名> 换一个隔离库跑。
+        // 存在的理由: companion_test 是共享库, 历史测试造的数据永久留在里面,
+        // 老代码的 backfill 在脏持久化上下文上是 O(n²), 越跑越慢。
+        // 你不必删别人库里的数据, 换一个空库就行。
+        //
+        // 新建一个空库之后, 先装扩展再跑, 否则会有 1 个用例红:
+        //   CREATE EXTENSION IF NOT EXISTS vector;
+        // 少了它是怎么红的 —— memories 表建不出来, 但 ddl-auto: update 默认
+        // halt_on_error=false, 它只记一条 WARN 就继续启动。于是整个套件里
+        // 只有 MemoryAgentTest 一条用例红, 报 "relation \"memories\" does not exist",
+        // 而它看起来像个实体扫描问题。旧库之所以不红, 是因为那台库上早就装着
+        // vector 扩展、表也早就建好了 —— 一个只在"换干净库"时才暴露的假绿。
+        if (project.hasProperty('testDb')) {
+            systemProperty 'spring.datasource.url',
+                    "jdbc:postgresql://127.0.0.1:5432/${project.property('testDb')}"
+        }
     }
 
     // Lombok 全局（与仓 1 口径一致: 注解处理器只在编译期）
