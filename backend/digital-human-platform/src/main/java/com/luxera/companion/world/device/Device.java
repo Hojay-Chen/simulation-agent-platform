@@ -4,6 +4,7 @@ import com.luxera.companion.boundary.action.Capability;
 import com.luxera.companion.boundary.event.EventTypeId;
 import com.luxera.companion.boundary.event.SensoryEvent;
 import com.luxera.companion.registry.DomainType;
+import com.luxera.companion.registry.DomainTypeRegistry;
 import com.luxera.companion.world.object.WorldObject;
 
 import java.time.Instant;
@@ -349,5 +350,29 @@ public interface Device extends WorldObject {
         public String describe() {
             return "设备 " + deviceId + " 不可用(" + reason + ")";
         }
+    }
+
+    // ─────────────────────────── 类型登记 ───────────────────────────
+
+    /**
+     * <b>本文件里的 {@link Unavailable} 由本接口自己登记</b> —— 装配层调用。
+     *
+     * <h2>为什么登记归声明处, 而不是归一个"设备事件总目录"</h2>
+     * 设备这一侧<b>没有</b>那样一个类, 而且不该有: 一台设备上有哪几路声音、屏幕会不会亮、
+     * 电量怎么变, 是三套子系统各自的事({@link AudioSystem} / {@link ScreenSystem} /
+     * {@link BatterySystem}), {@link Phone} 只负责把它们组合起来 ——
+     * 它不解析事件名, 也不该被逼着认识每一个载荷的形状。
+     * <p>于是这条约定在这里退化成最朴素的形式: <b>谁声明这个 record, 谁登记它</b>。
+     * 好处与 {@code ContinuousEffectLedger} 那处一样 —— 类型名与载荷形状在同一个文件里,
+     * 不可能不一致; 代价是装配层多几行(五个文件各一行), 而抵住"漏了一行"的仍然是
+     * §8.6.6 那条守卫。
+     *
+     * @param registry 装配层正在拼的那个注册表
+     * @return 登记了几条(恒为 1)。可重复调用: 同一个类登记两次是一次空操作
+     */
+    public static int registerTypes(DomainTypeRegistry registry) {
+        Objects.requireNonNull(registry, "注册表不能为空");
+        registry.register(Unavailable.class);
+        return 1;
     }
 }

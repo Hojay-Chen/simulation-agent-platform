@@ -1,7 +1,9 @@
 package com.luxera.companion.human.body.clothing;
 
 import com.luxera.companion.registry.DomainType;
+import com.luxera.companion.registry.DomainTypeRegistry;
 
+import java.util.Objects;
 import java.util.Set;
 
 /**
@@ -45,5 +47,32 @@ public final class Coat extends AbstractWearable {
 
     public static Coat of(String objectId) {
         return new Coat(objectId, "外套");
+    }
+
+    /**
+     * <b>本类登记它自己</b> —— 装配层调用。
+     *
+     * <h2>为什么这一次没有把入口收在一个"握有全集"的类上</h2>
+     * 那条规则的前提是<b>存在</b>这样一个类: 一个本来就必须知道"有哪几种"的地方
+     * (活动那边是 {@code ActivityFactory}, 它的查表键就是类型名)。
+     * 衣服这边<b>没有</b>, 而且不是"暂时没写" —— {@code ClothingSet} 持有的是
+     * <b>这一件</b>(世界里的一个对象, 有自己的 id 与状态), 不是"有哪几款衣服";
+     * 本包也刻意不提供"平台 new 一件衣服"的工厂(见 {@link DownJacket} 的
+     * "它怎么被造出来": 一件具体的衣服由世界侧构造, 身体只是引用)。
+     * 于是硬造一个"衣物目录"只会多出一个谁也不查的登记点。
+     * <p>各自登记因此是这里<b>唯一不引入新耦合</b>的做法: 类型名与它的三个物理属性
+     * 仍然在同一个文件里, 而装配层多一行 {@code Coat.registerTypes(registry)}。
+     * 哪天平台真的需要一份"衣物表"(前端要列款式、商店要上架), 那一天该做的是
+     * 写那个目录类, 并把这三个 {@code registerTypes} 一起收进去 ——
+     * 而不是现在先造一个空壳。
+     *
+     * @param registry 装配层正在拼的那个注册表
+     * @return 登记了几条(恒为 1)。可重复调用: 同一个类登记两次在注册表那边
+     *         是一次空操作, 所以装配层重复装配(或测试各自装配)不会炸
+     */
+    public static int registerTypes(DomainTypeRegistry registry) {
+        Objects.requireNonNull(registry, "注册表不能为空");
+        registry.register(Coat.class);
+        return 1;
     }
 }

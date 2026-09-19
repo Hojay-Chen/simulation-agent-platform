@@ -7,6 +7,7 @@ import com.luxera.companion.boundary.event.StateEffectEvent;
 import com.luxera.companion.boundary.event.WorldEvent;
 import com.luxera.companion.registry.CoreEventCatalog;
 import com.luxera.companion.registry.DomainType;
+import com.luxera.companion.registry.DomainTypeRegistry;
 import com.luxera.companion.world.digital.Location;
 import com.luxera.companion.world.object.ObjectId;
 import lombok.extern.slf4j.Slf4j;
@@ -28,8 +29,9 @@ import java.util.Optional;
  * </blockquote>
  * 落地点是三条, 缺一条都会让它重新变成"一个能被改的对象":
  * <ol>
- *   <li>本接口<b>没有</b> {@code setTemperature} 之类的方法 —— 只有 {@link #refresh(Instant)}
- *       这一个入口, 而它的数据源是 {@link EnvironmentProvider}(外部气象服务);</li>
+ *   <li>本接口<b>没有</b> {@code setTemperature} 之类的方法 —— 只有 {@link #fetch(Instant)}
+ *       这一个"拿数据"的入口(以及把拿回的东西落到现状上的 {@link #apply(EnvironmentRefresh)}),
+ *       而数据源是 {@link EnvironmentProvider}(外部气象服务);</li>
  *   <li>本接口<b>不</b>贡献任何 {@code Capability} —— 于是
  *       {@code ActionFabric} 里没有任何一条路由能指到它。她不能"让天变晴",
  *       只能感知天气然后决定自己做什么(带伞、不出门);</li>
@@ -48,15 +50,21 @@ import java.util.Optional;
  * <h2>刷新节奏: 每个 tick <b>不</b>算一条事件</h2>
  * 用户要求"定期执行比如每分钟或每 10 分钟更新一次形成一个 event"。所以:
  * <pre>
- *   refresh(now)                                  ← 由上层按 cadence 调用(默认 10 分钟)
- *      ├── fetch = provider.query(location, now)   ← 拿不到就记一次失败, 保留旧快照
- *      ├── delta = fetch.deltaFrom(上一次)
+ *   fetch(now)                                     ← 只读, 外呼, 一个字段都不改
+ *      ├── snapshot = provider.query(location, now) ← 拿不到就返回一条 failed
+ *      ├── delta = snapshot.deltaFrom(现状)
  *      ├── 变化超过阈值的通道 → 各产生一条事件
  *      └── 永远产生一条 snapshot-refreshed(它是"当前现状"的载体)
+ *   apply(那一份读数的)                             ← 纯内存, 改现状与计数
+ *   refresh(now) = apply(fetch(now))               ← 单线程路径用的合成
  * </pre>
- * {@link #refresh(Instant)} <b>只产出、不投递</b> —— 这一点是刻意的, 理由见
- * {@link EnvironmentRefresh#publishTo(EventFabric)} 的说明: 环境不知道自己该投给谁,
- * "谁在这个地方"这件事只有世界知道。
+ * <b>为什么"取"和"用"是两跳而不是一跳</b>: §8.5.9。外呼要挂在另一条线程上(否则一次
+ * 30 秒的气象超时会把她的当天停半分钟), 而改世界只能发生在唯一那条仿真线程上
+ * (见 {@code World} 的类注释)。见 {@link #fetch(Instant)} 里的那张线程表。
+ *
+ * <p>{@link #fetch(Instant)} <b>只产出、不投递、也不改现状</b> —— 这一点是刻意的,
+ * 理由见 {@link EnvironmentRefresh#publishTo(EventFabric)} 的说明: 环境不知道自己
+ * 该投给谁, "谁在这个地方"这件事只有世界知道。
  */
 public interface Environment {
 
@@ -123,16 +131,71 @@ public interface Environment {
     int failureCount();
 
     /**
-     * 拉一次新数据, 与上一次比较, 产出这一轮<b>值得投出去的变化</b>。
+     * <b>取</b>一次数据 —— 外呼在这里, 而它<b>一个字都不改本环境</b>。
      *
-     * <p>它<b>不投递</b>: 返回值里带着事件, 由知道"谁在这个地方"的一方
+     * <h2>为什么"取"与"用"要分成两个方法(§8.5.9)</h2>
+     * 因为这两件事必须发生在<b>两个不同的线程</b>上, 而它们各自有硬约束:
+     * <table border="1">
+     *   <tr><th></th><th>在哪条线程上</th><th>为什么</th></tr>
+     *   <tr>
+     *     <td>{@code fetch}</td><td>刷新线程(那条每 10 分钟一拍的)</td>
+     *     <td>它要外呼, 而一次气象 API 超时可以挂 30 秒 —— 那 30 秒绝不能落在
+     *         心跳线程上(§8.5.0: 否则"她的一天莫名其妙停了半分钟")</td>
+     *   </tr>
+     *   <tr>
+     *     <td>{@link #apply(EnvironmentRefresh)}</td><td>仿真线程(唯一进世界的)</td>
+     *     <td>{@code World} 刻意不加锁, 前提是只有一个写者(见它的类注释)。
+     *         改环境就是改世界</td>
+     *   </tr>
+     * </table>
+     * 所以本方法的契约里有一条<b>不许</b>: 不许改本环境的任何字段(快照、计数)。
+     * 它读的现状必须是"读一次、后面都用那一份" —— 否则同一批读数里的两条事件会
+     * 各自基于不同版本的现状算出来, 而那种不一致没有任何异常会报。
+     *
+     * <p>它<b>也不投递</b>: 返回值里带着事件, 由知道"谁在这个地方"的一方
      * ({@code World})决定投给谁。
      *
      * @param now 仿真时刻。提供方按它取数(见 {@link EnvironmentProvider#query}),
      *            "过了多久该重抓"的判断由上层按它做
-     * @return 这一轮的结果。失败也在返回值里如实表达(reason 非空), <b>不是</b>抛异常
+     * @return 这一轮的结果。失败也在返回值里如实表达(reason 非空), <b>不是</b>抛异常。
+     *         <b>失败不会被计入 {@link #failureCount()}</b> —— 计数是一次写,
+     *         而写属于 {@link #apply(EnvironmentRefresh)}(见它)
      */
-    EnvironmentRefresh refresh(Instant now);
+    EnvironmentRefresh fetch(Instant now);
+
+    /**
+     * <b>用</b>那一份取回的读数 —— 纯内存, 改本环境的现状与计数。
+     *
+     * <p>它<b>不许外呼</b>(数据已经在参数里了), 也<b>只由仿真线程调</b>(见
+     * {@link #fetch(Instant)} 的两线程表)。
+     *
+     * <p>失败也走这里: 一次失败的读数只让 {@link #failureCount()} 加一,
+     * 快照<b>一个字都不改</b> —— 与"外面还是 3 度(至少直到下一次成功刷新)"这个事实一致,
+     * 一次网络抖动不该让她突然经历一次"气温数据消失"(见 {@code Default.refresh} 的注释)。
+     */
+    void apply(EnvironmentRefresh fetched);
+
+    /**
+     * 取一次数据并立刻用它 —— <b>"取"与"用"的合成</b>, 给<b>单线程</b>的那几条路径用。
+     *
+     * <p>它的实现就是 {@code apply(fetch(now))}, 刻意写成 {@code default}: 合成顺序
+     * 只有一处, 不会有人写反。
+     *
+     * <p><b>谁可以用它</b>: 离线回放({@code World.advance} 那条路径)、她进门时的
+     * 即时刷新({@code World.placeHumanAt})、以及任何"我这一条线程就是世界"的场合。
+     * <b>谁不可以用</b>: 心跳线路上任何周期性的东西 —— 生产路径的节奏是
+     * {@code World.fetchEnvironments} + {@code World.applyEnvironments} 两跳
+     * (§8.5.9)。用错了的症状是"她的一天每 10 分钟停半分钟", 而日志里只有一条
+     * 天气取数的 WARN。
+     *
+     * @param now 仿真时刻
+     * @return 这一轮的结果(与 {@link #fetch(Instant)} 同义)
+     */
+    default EnvironmentRefresh refresh(Instant now) {
+        EnvironmentRefresh fetched = fetch(now);
+        apply(fetched);
+        return fetched;
+    }
 
     /** 一行摘要 —— 日志与诊断面板用。 */
     default String describe() {
@@ -144,7 +207,8 @@ public interface Environment {
     // ═══════════════════════════ 一轮刷新的结果 ═══════════════════════════
 
     /**
-     * {@link #refresh(Instant)} 的返回值 —— <b>把"没刷新"与"刷新了但没变"分开</b>。
+     * {@link #fetch(Instant)} 的返回值(合成的 {@link #refresh(Instant)} 也原样返回它)
+     * —— <b>把"没拿到数据"与"拿到了但没变"分开</b>。
      *
      * <h2>为什么它需要存在, 而不是直接返回 {@code List<WorldEvent>}</h2>
      * 因为"这一次没拿到数据"必须能被调用方看见: 它要计入失败次数、要在诊断面板上显示、
@@ -206,10 +270,12 @@ public interface Environment {
          * 谁正在去实验室的地铁上 —— 那是世界的知识({@code World} 记录了
          * {@code humanId → placeId})。所以分工是:
          * <pre>
-         *   Environment.refresh()        → 产出"发生了什么变化"
-         *   World.advance()              → 决定"谁在受影响的地方"
-         *   EnvironmentRefresh.publishTo → 把事件放进那个人的 EventFabric
+         *   Environment.fetch()               → 产出"发生了什么变化"
+         *   World.applyEnvironments()         → 决定"谁在受影响的地方" + 把读数落到现状上
+         *   EnvironmentRefresh.publishTo()    → 把事件放进那个人的 EventFabric
          * </pre>
+         * (离线回放那条路径上, {@code World.advance()} 一个人把这三件事都做了 ——
+         * 那条路径上"世界"就是它自己那条线程。)
          * 一个把 {@code EventFabric} 直接注入 {@code Environment} 的实现会更省事,
          * 但它必须是<b>某一个人的</b> fabric —— 而环境是给所有人共用的。
          * 那样做的后果是"上海的天气只发给了她一个人", 而下一个在这个环境里的
@@ -276,10 +342,25 @@ public interface Environment {
         private final Location queryPoint;
         private final EnvironmentProvider provider;
 
-        private EnvironmentSnapshot current;
-        private EnvironmentSnapshot previous;
-        private int refreshCount;
-        private int failureCount;
+        /**
+         * 现状、上一次、以及两个计数 —— 这四个是<b>唯一</b>被跨线程读写的字段(§8.5.9)。
+         *
+         * <h2>它们为什么是 volatile</h2>
+         * 写只有一处(仿真线程上的 {@link #apply(EnvironmentRefresh)}), 但
+         * {@link #fetch(Instant)} 在<b>刷新线程</b>上读 {@code current} 来算 delta。
+         * 没有 volatile 的话, 刷新线程可能拿到一个更旧的引用, 于是它算出来的变化是
+         * 相对<b>更早那份快照</b>的 —— 症状是"温度从 3℃ 变 12℃"那条事件被吞掉,
+         * 或者一条早就投过的事件被重复投一次, 而日志里一切正常。
+         *
+         * <p>volatile 是这里<b>够用</b>的全部: 一个写者 + 若干读者, 读者要的只是
+         * "读到某个完整版本的快照"(快照本身是不可变 record, 所以引用可见即内容可见),
+         * 不需要复合原子性 —— 复合原子性要的是锁, 而 {@code World} 那一侧刻意不加锁
+         * (见它的类注释: 加锁会在重入的投递路径上死锁)。
+         */
+        private volatile EnvironmentSnapshot current;
+        private volatile EnvironmentSnapshot previous;
+        private volatile int refreshCount;
+        private volatile int failureCount;
 
         /**
          * @param id         环境 id
@@ -290,8 +371,16 @@ public interface Environment {
          *                   第一条变化事件变成"从 null 变成 20℃", 而那条事件的
          *                   差值是没有意义的。装配时给一份"大致合理"的初始快照
          *                   (见 {@link EnvironmentSnapshot#mild})比让第一次刷新去补要诚实
+         *
+         * <p><b>为什么是 public(而不是包级私有)</b>: 造环境这件事是<b>装配</b>
+         * (§8.6), 而装配住在别的包里 —— 一个包级私有的构造器等于说"只有
+         * {@code world.environment} 自己能造出一个环境", 于是装配层要么被迫写一个
+         * 假的环境(那就绕开了 delta 与阈值这套真正的逻辑), 要么把装配塞进这个包。
+         * 两条路都比多一个可见性关键字贵。这里刻意<b>不</b>提供静态工厂
+         * {@code of(...)}: 一个构造器和它的名字已经说明了一切, 再加一层只是多一处
+         * 可以不一致的地方。
          */
-        Default(ObjectId id, ObjectId place, Location queryPoint,
+        public Default(ObjectId id, ObjectId place, Location queryPoint,
                 EnvironmentProvider provider, EnvironmentSnapshot initial) {
             this.id = Objects.requireNonNull(id, "环境必须有身份");
             this.place = Objects.requireNonNull(place, "环境必须属于一个地点");
@@ -336,34 +425,43 @@ public interface Environment {
         }
 
         /**
-         * 拉一次新数据。
+         * 外呼一次, 算出"这一轮值得投出去的变化", 然后<b>什么都不改</b>。
          *
-         * <p>失败时<b>什么都不改变</b>: 旧快照继续是 "current"。
-         * 这与"外面还是 3 度(至少直到下一次成功刷新)"这个事实一致 ——
+         * <p>失败时返回一条 {@link EnvironmentRefresh#failed} —— 旧快照继续是 current,
+         * 计数也不动。这与"外面还是 3 度(至少直到下一次成功刷新)"这个事实一致 ——
          * 一次网络抖动不该让她突然经历一次"气温数据消失"。
+         *
+         * <h2>"只读一次现状"为什么是这段代码里最要紧的一行</h2>
+         * {@code before} 只读一次, 后面 delta 与 {@code WeatherChanged} 都用它。
+         * 如果两处各自去读 {@code current}, 那么当仿真线程在两条读之间刚刚
+         * {@link #apply(EnvironmentRefresh)} 过一份新数据时, 我们会拿"新现状"去比
+         * "更早那份"算变化 —— 于是天气从晴变雨那条事件里写着一个错的"从"。
+         * 这种错误不会抛异常, 只会在时间轴上留一条读起来有点怪的记录。
          */
         @Override
-        public EnvironmentRefresh refresh(Instant now) {
-            Objects.requireNonNull(now, "刷新必须带仿真时刻");
+        public EnvironmentRefresh fetch(Instant now) {
+            Objects.requireNonNull(now, "取数必须带仿真时刻");
+            // 现状只读一次 —— 见方法注释
+            EnvironmentSnapshot before = this.current;
+
             EnvironmentSnapshot fetched;
             try {
                 fetched = provider.query(queryPoint, now);
             } catch (RuntimeException e) {
-                failureCount++;
                 // WARN 而不是 ERROR: 一次气象 API 超时不是系统故障, 而且我们不希望
-                // 一个每分钟重试的数据链把 ERROR 日志刷满, 从而盖住真正的错误
-                log.warn("[Environment/{}] 刷新失败({} 次): {}", id.value(), failureCount,
-                        e.toString());
-                return EnvironmentRefresh.failed(current, e.getClass().getSimpleName()
+                // 一个每分钟重试的数据链把 ERROR 日志刷满, 从而盖住真正的错误。
+                //
+                // 计数只能报"此前"的次数: failureCount++ 是一次<b>写</b>, 而写属于
+                // apply(§8.5.9 的两线程分工)。一份取不回来的读数到底算不算一次失败,
+                // 由"它有没有被应用"决定 —— 所以真正的计数发生在 apply 里
+                log.warn("[Environment/{}] 取数失败(此前已失败 {} 次): {}", id.value(),
+                        failureCount, e.toString());
+                return EnvironmentRefresh.failed(before, e.getClass().getSimpleName()
                         + (e.getMessage() == null ? "" : ": " + e.getMessage()),
                         provider.providerId(), now);
             }
 
-            this.previous = this.current;
-            this.current = fetched;
-            this.refreshCount++;
-
-            EnvironmentSnapshot.Delta delta = fetched.deltaFrom(previous);
+            EnvironmentSnapshot.Delta delta = fetched.deltaFrom(before);
             List<WorldEvent> changes = new ArrayList<>();
 
             // 快照本身永远先投 —— 它是"当前现状"的载体, 供落库、重放与诊断。
@@ -378,7 +476,7 @@ public interface Environment {
                 changes.add(HumidityChanged.of(fetched, queryPoint, now));
             }
             if (delta.conditionChanged()) {
-                changes.add(WeatherChanged.of(previous, fetched, queryPoint, now));
+                changes.add(WeatherChanged.of(before, fetched, queryPoint, now));
             }
             if (delta.precipitationStarted()
                     && fetched.precipitationMmPerHour() >= RAIN_INTENSITY_THRESHOLD_MM) {
@@ -401,13 +499,36 @@ public interface Environment {
             // 所以这一处<b>暂时不做</b>: 见类注释末尾的说明
             if (delta.illuminanceChangedBy(ILLUMINANCE_RATIO_THRESHOLD)) {
                 log.debug("[Environment/{}] 光照变化显著({} → {} lux), 但目录里没有对应事件类型",
-                        id.value(), previous == null ? -1 : previous.illuminanceLux(),
-                        fetched.illuminanceLux());
+                        id.value(), before.illuminanceLux(), fetched.illuminanceLux());
             }
 
-            log.debug("[Environment/{}] 刷新成功: {}", id.value(),
-                    EnvironmentRefresh.of(fetched, changes, provider.providerId(), now).describe());
-            return EnvironmentRefresh.of(fetched, changes, provider.providerId(), now);
+            EnvironmentRefresh result = EnvironmentRefresh.of(fetched, changes, provider.providerId(), now);
+            log.debug("[Environment/{}] 取数成功: {}", id.value(), result.describe());
+            return result;
+        }
+
+        /**
+         * 把一份取回的读数落到本环境上 —— 纯内存, <b>一行代码都没有外呼</b>。
+         *
+         * <p>成功: {@code previous ← current, current ← 新快照, refreshCount++}。
+         * 失败: 只有 {@code failureCount++} —— 快照与 previous 都不动(见
+         * {@link #fetch(Instant)} 里那句"外面还是 3 度")。
+         *
+         * <p>注意这两条路的<b>顺序</b>: 先看失败、再看成功。一个失败的读数带的是
+         * {@code snapshot == before}(fetch 里就是这么造的), 谁要是不小心把它当成
+         * 成功应用下去, previous 与 current 会变成同一份 —— 下一轮 delta 恒为空,
+         * 她的天气就"冻住"了, 而且再一次异常都不会报。
+         */
+        @Override
+        public void apply(EnvironmentRefresh fetched) {
+            Objects.requireNonNull(fetched, "要应用的读数不能为空");
+            if (!fetched.ok()) {
+                failureCount++;
+                return;
+            }
+            this.previous = this.current;
+            this.current = fetched.snapshot();
+            this.refreshCount++;
         }
 
         @Override
@@ -1016,5 +1137,43 @@ public interface Environment {
         static String effectKey(String channel, String locationId) {
             return "environment:" + channel + ":" + locationId;
         }
+    }
+
+    // ─────────────────────────── 类型登记 ───────────────────────────
+
+    /**
+     * <b>环境域的全部八条事件, 由本接口自己登记</b> —— 装配层调用。
+     *
+     * <h2>为什么登记这件事归这里</h2>
+     * 因为"外面发生了什么值得她知道"这件事<b>只有本文件说得清</b>: 八条 record 全在这里,
+     * 而"哪一次读数该变成哪一条事件"的判断也在 {@link #apply(EnvironmentRefresh)} 那一条
+     * 路径上(见 {@code Default} 的注释)。八个类型各登记各的不会让任何一处变清楚 ——
+     * 它们共享同一个 {@code EnvironmentKeys.effectKey} 约定与同一段"为什么是这八条"
+     * 的推理, 拆开之后那份推理就没有主人了。
+     *
+     * <p>于是这里的 {@code return 8} 不是"八条恰好同在一个文件里的类型", 而是
+     * <b>环境这一个世界侧的全部现象</b> —— 也正是启动日志里那个类型数要回答的问题。
+     *
+     * <h2>为什么这条清单不能靠"扫 environment.* 前缀"推出来</h2>
+     * 因为 {@code environment.location-changed} 这条<b>不在本文件里</b> ——
+     * 它声明在 {@code world.digital.Place}(移动是地点侧发生的事)。
+     * 一条按前缀猜的装配会把它漏掉, 而漏掉的后果是"她什么时候到过实验室"
+     * 在重启之后读不回来 —— 而那恰是"她那天为什么穿了羽绒服"的上游。
+     * 它由 {@code Place.registerTypes} 登记, 装配层两行都要写。
+     *
+     * @param registry 装配层正在拼的那个注册表
+     * @return 登记了几条。可重复调用: 同一个类登记两次在注册表那边是一次空操作
+     */
+    public static int registerTypes(DomainTypeRegistry registry) {
+        Objects.requireNonNull(registry, "注册表不能为空");
+        registry.register(TemperatureChanged.class);
+        registry.register(HumidityChanged.class);
+        registry.register(WeatherChanged.class);
+        registry.register(WindStarted.class);
+        registry.register(AirQualityChanged.class);
+        registry.register(DaylightChanged.class);
+        registry.register(SnapshotRefreshed.class);
+        registry.register(RainStarted.class);
+        return 8;
     }
 }

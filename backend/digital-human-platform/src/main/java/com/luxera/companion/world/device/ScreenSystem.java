@@ -3,6 +3,7 @@ package com.luxera.companion.world.device;
 import com.luxera.companion.boundary.event.EventTypeId;
 import com.luxera.companion.boundary.event.SensoryEvent;
 import com.luxera.companion.registry.DomainType;
+import com.luxera.companion.registry.DomainTypeRegistry;
 import com.luxera.companion.boundary.event.EventFabric;
 import lombok.extern.slf4j.Slf4j;
 
@@ -492,5 +493,25 @@ public interface ScreenSystem {
             snapshot.put("foregroundApplication", foregroundApplication);
             return java.util.Collections.unmodifiableMap(snapshot);
         }
+    }
+
+    // ─────────────────────────── 类型登记 ───────────────────────────
+
+    /**
+     * <b>本接口唯一的一条事件, 由本接口自己登记</b> —— 装配层调用。
+     *
+     * <p>它登记的是{@link ScreenSystem} 这个子系统能陈述的全部事实, 今天恰好一条:
+     * 亮屏、熄屏、锁屏、解锁、改亮度、切前台应用<b>全都是它</b> —— 区别在载荷的
+     * {@code reason} 里。理由与 {@link BatterySystem#registerTypes} 相同:
+     * 拆成六条会让"她什么时候拿起过手机"这个问题需要查六张表, 而"她拿起手机了"
+     * 本来就是一个事实。
+     *
+     * @param registry 装配层正在拼的那个注册表
+     * @return 登记了几条(恒为 1)。可重复调用: 同一个类登记两次是一次空操作
+     */
+    public static int registerTypes(DomainTypeRegistry registry) {
+        Objects.requireNonNull(registry, "注册表不能为空");
+        registry.register(ScreenChanged.class);
+        return 1;
     }
 }

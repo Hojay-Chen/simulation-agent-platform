@@ -1,7 +1,9 @@
 package com.luxera.companion.human.body.clothing;
 
 import com.luxera.companion.registry.DomainType;
+import com.luxera.companion.registry.DomainTypeRegistry;
 
+import java.util.Objects;
 import java.util.Set;
 
 /**
@@ -55,5 +57,22 @@ public final class DownJacket extends AbstractWearable {
     /** 便捷构造 —— 供初始化脚本与测试用。生产路径上应当由世界侧给出真实的 id 与名字。 */
     public static DownJacket of(String objectId) {
         return new DownJacket(objectId, "羽绒服");
+    }
+
+    /**
+     * <b>本类登记它自己</b> —— 装配层调用。
+     *
+     * <p>为什么衣物这一族破例各自登记(而不是收在一个"握有全集"的类上), 见
+     * {@link Coat#registerTypes} —— 简短版本: 本包没有、也不该有一个"有哪几款衣服"
+     * 的目录类, {@link ClothingSet} 持有的是<b>这一件</b>而不是"有哪几款"。
+     * 编造一个没人查的目录只会让"类型叫什么"与"它长什么样"分到两个文件里。
+     *
+     * @param registry 装配层正在拼的那个注册表
+     * @return 登记了几条(恒为 1)。可重复调用: 同一个类登记两次是一次空操作
+     */
+    public static int registerTypes(DomainTypeRegistry registry) {
+        Objects.requireNonNull(registry, "注册表不能为空");
+        registry.register(DownJacket.class);
+        return 1;
     }
 }

@@ -5,6 +5,7 @@ import com.luxera.companion.boundary.event.EventTypeId;
 import com.luxera.companion.boundary.event.SensoryEvent;
 import com.luxera.companion.registry.CoreEventCatalog;
 import com.luxera.companion.registry.DomainType;
+import com.luxera.companion.registry.DomainTypeRegistry;
 import com.luxera.companion.world.environment.Environment;
 import com.luxera.companion.world.object.ObjectId;
 import com.luxera.companion.world.object.WorldObject;
@@ -368,5 +369,25 @@ public final class Place implements WorldObject {
             return "移动 " + (fromPlaceId == null ? "?" : fromPlaceId)
                     + " → " + (toPlaceId == null ? "?" : toPlaceId) + "(" + reason + ")";
         }
+    }
+
+    // ─────────────────────────── 类型登记 ───────────────────────────
+
+    /**
+     * <b>本类声明的那一条事件, 由本类自己登记</b> —— 装配层调用。
+     *
+     * <h2>为什么它由本类登记, 而不是由 {@code Environment} 一起登记</h2>
+     * 它的名字是 {@code environment.location-changed}(移动是环境侧的事实), 但它的
+     * record <b>声明在本文件里</b> —— 谁声明这个形状, 谁登记这个名字。
+     * 把它挂到 {@code Environment} 那边会造出一条<b>只为登记而存在的引用</b>:
+     * 环境侧从此 import 了地点侧的类型, 而那条依赖在别处没有任何用途。
+     *
+     * @param registry 装配层正在拼的那个注册表
+     * @return 登记了几条(恒为 1)。可重复调用: 同一个类登记两次是一次空操作
+     */
+    public static int registerTypes(DomainTypeRegistry registry) {
+        Objects.requireNonNull(registry, "注册表不能为空");
+        registry.register(LocationChanged.class);
+        return 1;
     }
 }

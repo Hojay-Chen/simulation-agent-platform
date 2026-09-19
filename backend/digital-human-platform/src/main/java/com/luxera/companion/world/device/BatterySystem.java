@@ -4,6 +4,7 @@ import com.luxera.companion.boundary.event.EventTypeId;
 import com.luxera.companion.boundary.event.StateEffectEvent;
 import com.luxera.companion.registry.CoreEventCatalog;
 import com.luxera.companion.registry.DomainType;
+import com.luxera.companion.registry.DomainTypeRegistry;
 import com.luxera.companion.boundary.event.EventFabric;
 import lombok.extern.slf4j.Slf4j;
 
@@ -402,5 +403,24 @@ public interface BatterySystem {
             snapshot.put("drainPerHour", drainPerHour);
             return Collections.unmodifiableMap(snapshot);
         }
+    }
+
+    // ─────────────────────────── 类型登记 ───────────────────────────
+
+    /**
+     * <b>本接口唯一的一条事件, 由本接口自己登记</b> —— 装配层调用。
+     *
+     * <p>它登记的不是"某个恰好写在这里的类", 而是{@link BatterySystem} 这个子系统
+     * <b>能向世界陈述的全部事实</b> —— 今天恰好只有一条({@link BatteryChanged})。
+     * 电量变化、插电、拔电、没电都走它, 因为它们的区别全在载荷里, 而不是在类型名里:
+     * 拆成四条会让"她手机什么时候开始没电的"这个问题需要查四张表。
+     *
+     * @param registry 装配层正在拼的那个注册表
+     * @return 登记了几条(恒为 1)。可重复调用: 同一个类登记两次是一次空操作
+     */
+    public static int registerTypes(DomainTypeRegistry registry) {
+        Objects.requireNonNull(registry, "注册表不能为空");
+        registry.register(BatteryChanged.class);
+        return 1;
     }
 }

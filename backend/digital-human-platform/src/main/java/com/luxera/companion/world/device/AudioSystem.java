@@ -3,6 +3,7 @@ package com.luxera.companion.world.device;
 import com.luxera.companion.boundary.event.EventTypeId;
 import com.luxera.companion.boundary.event.SensoryEvent;
 import com.luxera.companion.registry.DomainType;
+import com.luxera.companion.registry.DomainTypeRegistry;
 import com.luxera.companion.boundary.event.EventFabric;
 import lombok.extern.slf4j.Slf4j;
 
@@ -507,5 +508,30 @@ public interface AudioSystem {
         public static List<AudioChannel> channels() {
             return List.of(AudioChannel.values());
         }
+    }
+
+    // ─────────────────────────── 类型登记 ───────────────────────────
+
+    /**
+     * <b>本接口的三条事件, 由本接口自己登记</b> —— 装配层调用。
+     *
+     * <h2>为什么是三条一起, 而不是每一条各登记各的</h2>
+     * 因为"哪一路通道投哪一条事件"这张表就在本文件的类注释里, 而它是<b>互斥的五选三</b>:
+     * 通知音由 {@code NotificationSystem} 投(那里还要带上"震了没有"), 剩下三路
+     * 各自一条。分开登记不会让任何一处变清楚 —— 这三条的类型名与它们的载荷形状
+     * 本来就只在这一个文件里, 而它们必须一起被读懂(见 {@code emit} 里那个 switch)。
+     *
+     * <p>换句话说: 这里登记的不是"三条恰好同在一处的类型", 而是
+     * <b>扬声器这一个子系统能陈述的全部事实</b>。
+     *
+     * @param registry 装配层正在拼的那个注册表
+     * @return 登记了几条。可重复调用: 同一个类登记两次是一次空操作
+     */
+    public static int registerTypes(DomainTypeRegistry registry) {
+        Objects.requireNonNull(registry, "注册表不能为空");
+        registry.register(SoundEmitted.class);
+        registry.register(RingtoneStarted.class);
+        registry.register(AlarmFired.class);
+        return 3;
     }
 }

@@ -2,6 +2,7 @@ package com.luxera.companion.human.life.activity;
 
 import com.luxera.companion.human.life.plan.PlanIntent;
 import com.luxera.companion.human.life.plan.PlanItemId;
+import com.luxera.companion.registry.DomainTypeRegistry;
 import lombok.extern.slf4j.Slf4j;
 
 import java.time.Instant;
@@ -277,6 +278,51 @@ public final class ActivityFactory {
                     .append(" 次 ← 需要处理: 有一类活动还没被建模, 或某个三方忘了注册");
         }
         return sb.toString();
+    }
+
+    // ─────────────────────────── 类型登记 ───────────────────────────
+
+    /**
+     * <b>十二类活动的类型名, 由本类自己登记</b> —— 装配层调用。
+     *
+     * <h2>为什么登记这件事归这里, 而不归那十二个类各自</h2>
+     * 因为 {@link #CREATORS} 已经把"有哪几类活动"写死在同一个文件里了 ——
+     * 它的键就是十二个 {@code @DomainType} 的原值, 值就是那十二个类的构造器。
+     * 让 {@link StudyActivity} 自己写一个只登记自己的 {@code registerTypes} 并不会
+     * 让这张表少一行: 本类仍然必须知道全部十二个(它要把 {@code activityType}
+     * 这个字符串解析成类)。于是"加一类活动"从<b>改一个地方</b>变成改两个地方,
+     * 而漏掉的那一个不会报错 —— 它的表现是"她做这一类事的那段历史读不回来",
+     * 与原因隔着一整个重启。
+     * <p>放在这里之后, 新增一类活动仍然只做原来那两件事: 写一个类, 在 static 块里
+     * {@code register(...)} 一行。类型名与它的载荷形状因此从不分开。
+     *
+     * <h2>为什么不扫描 classpath</h2>
+     * 见 {@link DomainTypeRegistry} 的类注释: <b>装配顺序可控, 而 classpath 扫描顺序
+     * 不可控</b>。扫描还会让 {@code DomainTypeRegistry.unregistered(...)} 那道自检
+     * 永远为空 —— 它本来是用来发现"带了类却忘了登记"的, 而扫描把"忘没忘"这件事
+     * 从存在层面消掉了。
+     *
+     * @param registry 装配层正在拼的那个注册表
+     * @return 登记了几条 —— 装配层把它汇总进启动日志, 让"这个 agent 的世界里
+     *         有哪几类活动"成为一行可读的话。可重复调用: 同一个类登记两次在
+     *         注册表那边是一次空操作(它记一条 DEBUG 就跳过), 所以装配层重复装配
+     *         或者测试各自装配都不会炸
+     */
+    public static int registerTypes(DomainTypeRegistry registry) {
+        Objects.requireNonNull(registry, "注册表不能为空");
+        registry.register(SleepActivity.class);
+        registry.register(StudyActivity.class);
+        registry.register(WorkActivity.class);
+        registry.register(MealActivity.class);
+        registry.register(CommuteActivity.class);
+        registry.register(ExerciseActivity.class);
+        registry.register(LeisureActivity.class);
+        registry.register(SocialActivity.class);
+        registry.register(HouseworkActivity.class);
+        registry.register(HobbyActivity.class);
+        registry.register(RestActivity.class);
+        registry.register(OtherActivity.class);
+        return 12;
     }
 
     /** 只给测试用 —— 清空到只剩内置的十二类。 */

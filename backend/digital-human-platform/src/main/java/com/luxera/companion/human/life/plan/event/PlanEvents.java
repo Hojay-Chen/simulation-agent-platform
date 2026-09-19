@@ -10,6 +10,7 @@ import com.luxera.companion.human.life.plan.PlanMutation;
 import com.luxera.companion.human.life.plan.PlanRevision;
 import com.luxera.companion.human.life.plan.PlanTrigger;
 import com.luxera.companion.registry.DomainType;
+import com.luxera.companion.registry.DomainTypeRegistry;
 
 import java.time.Duration;
 import java.time.Instant;
@@ -89,6 +90,40 @@ public final class PlanEvents {
     public static final EventTypeId REVISION_CREATED = EventTypeId.parse("plan.revision-created.v1");
     public static final EventTypeId VALIDATION_FAILED =
             EventTypeId.parse("system.plan-validation-failed.v1");
+
+    // ─────────────────────────── 类型登记 ───────────────────────────
+
+    /**
+     * <b>本文件里的六条事件, 由本类自己登记</b> —— 装配层调用。
+     *
+     * <h2>为什么登记这件事归这里</h2>
+     * 因为"这六条一起构成计划侧的全部事件"这件事, 本来就只有本文件知道 ——
+     * 上面那六个 {@link EventTypeId} 常量与下面那六个 record 是同一个事实的两半。
+     * 让 {@link ItemDue} 自己登记自己也能跑, 但那样 {@code plan.*} 就没有任何一处
+     * 能回答"计划域一共有哪些事件"; 而那张清单是诊断面板、启动日志与
+     * §8.6.6 那条守卫共同要的东西。把入口留在这里, 清单与实现永远在同一个文件里。
+     *
+     * <h2>为什么这条清单不能靠"扫 plan.* 前缀"推出来</h2>
+     * 因为六条里有一条<b>不在这个命名空间下</b>: {@link ValidationFailed} 是
+     * {@code system.plan-validation-failed} —— 计划校验失败是"系统级故障",
+     * 与"计划表上发生了什么"不是同一类事实(见它的 javadoc)。
+     * 一条按前缀猜的装配会安静地漏掉它, 而漏掉的后果是"她今天为什么什么都没安排"
+     * 这个问题在重启之后再没有答案 —— 那正是这条事件存在的全部理由。
+     *
+     * @param registry 装配层正在拼的那个注册表
+     * @return 登记了几条 —— 装配层把它汇总进启动日志。可重复调用: 同一个类登记两次
+     *         在注册表那边是一次空操作, 所以装配层重复装配(或测试各自装配)不会炸
+     */
+    public static int registerTypes(DomainTypeRegistry registry) {
+        Objects.requireNonNull(registry, "注册表不能为空");
+        registry.register(ItemScheduled.class);
+        registry.register(ItemDue.class);
+        registry.register(ItemFinished.class);
+        registry.register(ItemInterrupted.class);
+        registry.register(RevisionCreated.class);
+        registry.register(ValidationFailed.class);
+        return 6;
+    }
 
     // ─────────────────────────── plan.item-scheduled.v1 ───────────────────────────
 

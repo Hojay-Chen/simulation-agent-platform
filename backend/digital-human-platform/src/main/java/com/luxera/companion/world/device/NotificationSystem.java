@@ -3,6 +3,7 @@ package com.luxera.companion.world.device;
 import com.luxera.companion.boundary.event.EventTypeId;
 import com.luxera.companion.boundary.event.SensoryEvent;
 import com.luxera.companion.registry.DomainType;
+import com.luxera.companion.registry.DomainTypeRegistry;
 import com.luxera.companion.boundary.event.EventFabric;
 import lombok.extern.slf4j.Slf4j;
 
@@ -444,5 +445,33 @@ public interface NotificationSystem {
         public Map<String, Integer> unreadSnapshot() {
             return java.util.Collections.unmodifiableMap(new LinkedHashMap<>(unread));
         }
+    }
+
+    // ─────────────────────────── 类型登记 ───────────────────────────
+
+    /**
+     * <b>通知子系统的两条事件, 由本接口自己登记</b> —— 装配层调用。
+     *
+     * <h2>为什么是这两条一起</h2>
+     * 因为它们是同一个决定的两种结局: {@link NotificationRaised}(响了)与
+     * {@link NotificationDropped}(被策略拦下了)。只登记前者会让"她为什么没听见"
+     * 这个问题在重启之后完全失踪 —— 而静音、免打扰、深夜策略都是<b>正常行为</b>,
+     * 不是异常, 它们必须与"响了"一样可读回来。
+     *
+     * <h2>为什么这条清单不能靠"扫 device.phone 前缀"推出来</h2>
+     * 因为两条的名字不在同一个命名空间下: {@code device.phone.notification-raised}
+     * 是"这一台手机响了", 而 {@code device.notification-dropped} 是"通知这件事被拦下了"
+     * —— 后者对音箱、手表、未来的任何通知源都成立, 所以它少一层 {@code phone}。
+     * 按前缀猜的装配会安静地漏掉它, 于是"她那天群里 200 条消息为什么一条都没打扰她"
+     * 只剩一个"未读 200"的数字, 没有那 200 条是怎么被挡住的记录。
+     *
+     * @param registry 装配层正在拼的那个注册表
+     * @return 登记了几条。可重复调用: 同一个类登记两次是一次空操作
+     */
+    public static int registerTypes(DomainTypeRegistry registry) {
+        Objects.requireNonNull(registry, "注册表不能为空");
+        registry.register(NotificationRaised.class);
+        registry.register(NotificationDropped.class);
+        return 2;
     }
 }

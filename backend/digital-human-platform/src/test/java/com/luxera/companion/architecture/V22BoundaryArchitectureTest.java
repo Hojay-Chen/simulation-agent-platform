@@ -1,9 +1,14 @@
 package com.luxera.companion.architecture;
 
 import com.luxera.companion.boundary.event.EventFabric;
+import com.luxera.companion.human.Human;
+import com.tngtech.archunit.base.DescribedPredicate;
+import com.tngtech.archunit.core.domain.JavaClass;
 import com.tngtech.archunit.core.domain.JavaClasses;
 import com.tngtech.archunit.core.importer.ClassFileImporter;
 import com.tngtech.archunit.core.importer.ImportOption;
+import com.tngtech.archunit.lang.ArchRule;
+import com.tngtech.archunit.lang.EvaluationResult;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 
@@ -546,6 +551,139 @@ class V22BoundaryArchitectureTest {
                         + "“这个世界里能发生哪些事”的清单是假的, 而它恰恰是 V2.2 对"
                         + "“不知道都有哪些 event”这个批评的回应。请把它们登记进目录:\n  "
                         + String.join("\n  ", missing));
+    }
+
+    // ─────────────── 五、她的内部只给执行体与她自己看 ───────────────
+
+    /** 唯一一个被允许从 {@code human/} 外面读她内部的类。 */
+    private static final String HUMAN_ACTOR = "com.luxera.companion.runtime.HumanActor";
+
+    /**
+     * 允许读 {@code body()} / {@code life()} / {@code mind()} 的那两个位置 ——
+     * 这里写成<b>被禁的一方</b>（"既不在这个包, 也不是这个类"）,
+     * 因为 ArchUnit 那条规则的形状是 {@code noClasses().that(被禁者).should(...)}:
+     * 把被禁者用一句人话描述出来, 失败信息才会是一句人话
+     * （"没有任何一个'既不在 human/ 里, 也不是 HumanActor'的类可以调 Human.body()"）。
+     */
+    private static final DescribedPredicate<JavaClass> OUTSIDE_THE_DOCUMENTED_READ_FACE =
+            DescribedPredicate.describe(
+                    "既不在 human/ 里, 也不是 runtime.HumanActor",
+                    javaClass -> !javaClass.getPackageName().equals(HUMAN)
+                            && !javaClass.getPackageName().startsWith(HUMAN + ".")
+                            && !javaClass.getName().equals(HUMAN_ACTOR));
+
+    /**
+     * 读她内部的那三个入口只允许两处调用: {@code human/} 自己, 与 {@code runtime.HumanActor}。
+     *
+     * <h2>它要回答的问题是"谁在读她的内部"</h2>
+     * {@code Human.body()} / {@code life()} / {@code mind()} 今天是 {@code public} 的,
+     * 而原因<b>不是</b>"谁都可以用", 是 {@code HumanActor} 住在
+     * {@code com.luxera.companion.runtime} —— <b>另一个包</b>, 而 Java 没有
+     * "包内可见 + 指定的那个类也可见"这种可见性（没有 friend）。于是那三个方法的
+     * 注释里写着"只给 {@code HumanActor} 用", 而那句话<b>没有任何东西在守</b>。
+     *
+     * <p>这条规则的价值不在于防坏人: 读本身不改任何东西, 一个诚实的调用方读她
+     * 也不会出事。它的价值在于让那个问题<b>有一个可以回答的答案</b> ——
+     * 今天它只写在注释里, 而注释不会在有人加第四处调用点时报警。
+     *
+     * <h2>为什么这值得一条会红的规则: 绕过它的代价是"读到一半"</h2>
+     * 跨模块读她应该走 {@code Human.context()} —— §3.1.4 专门为这件事开的那扇门,
+     * 它给的是不可变快照。绕过它直接读 {@code body()} 的症状不是"不安全",
+     * 是<b>读到写了一半的状态</b>: actor 线程正在 {@code Body.advance()} 里做多步写入,
+     * 而读的人不是那条线程。这类错误的症状（一个自相矛盾的读数）与
+     * "世界真的就是这么变的"在日志里长得一模一样 —— 这正是本文件开头
+     * "违反边界的代码看起来很正常"那段的又一个实例。
+     *
+     * <h2>为什么是 ArchUnit 而不是源码扫描</h2>
+     * 因为这是纯粹的"谁调用了谁", 而且它看的是<b>字节码</b>: 注释或 javadoc 里
+     * 演示一句 {@code human.body()} 不会误报（{@code Human} 的类注释里就有这样的句子),
+     * 而把 Human 先存进字段再调（{@code this.someone.body()}）的绕法它照样看得见 ——
+     * 后者是源码扫描做不到的, 而"先存进字段"恰恰是最省事的绕法。
+     *
+     * <h2>为什么白名单是这两处, 而不是"就 HumanActor 一处"</h2>
+     * <ul>
+     *   <li><b>{@code runtime.HumanActor}</b> —— 它是驱动程序, §8.5.4 那张分工表
+     *       明确要它去 drive 三块部件（b/c/d 三步全都要读她）;</li>
+     *   <li><b>{@code human/} 自己</b> —— 包内调它是她的部件与她的视图之间的事。
+     *       一条"human 包也不许读 Human"的规则会把聚合根与它的部件切开,
+     *       而那不是这里要防的东西: 要防的是<b>跨模块</b>的读者。</li>
+     * </ul>
+     * 白名单只有这两处, 这是刻意的: 每多一处就需要一次"为什么它特殊"的论证,
+     * 而论证的成本正是这条规则想要的东西。
+     *
+     * <p>与 {@link #everyCoreEventTypeTheCodeDeclaresIsInTheCatalogue()} 同类:
+     * 真正被守的不是"这一个方法", 而是"这个问题的答案只有这几处"。
+     */
+    private static ArchRule onlyTheActorAndTheHumanPackageMayReadHerInternals() {
+        return noClasses()
+                .that(OUTSIDE_THE_DOCUMENTED_READ_FACE)
+                .should().callMethod(Human.class, "body")
+                .orShould().callMethod(Human.class, "life")
+                .orShould().callMethod(Human.class, "mind")
+                .because("跨模块读她的状态应当走 Human.context() —— 那是 §3.1.4 为只读专门开的门, "
+                        + "它给的是不可变快照(§3.1.4 的两条理由: 并发与方向)。"
+                        + "直接读 body()/life()/mind() 只有两处被允许: 驱动她的 runtime.HumanActor, "
+                        + "以及 human/ 包自己。别处读到的可能是写了一半的状态, "
+                        + "而那种矛盾在日志里看起来和'世界真的这么变了'一模一样");
+    }
+
+    @Test
+    void onlyTheActorAndTheHumanPackageReadHerInternals() {
+        onlyTheActorAndTheHumanPackageMayReadHerInternals().check(classes);
+    }
+
+    /**
+     * 上一条规则<b>不是空转的</b> —— 与 {@link #theClockRuleWouldActuallyCatchAViolation()} 同一种自检。
+     *
+     * <p>它比时钟那条更需要这次自检, 因为它的判据有两个容易写反的地方:
+     * <ul>
+     *   <li>谓词的方向（被禁的是"既不在 human/、也不是 actor"的那一群 ——
+     *       方向反了会让规则去检查"谁都可以调", 于是它永远绿）;</li>
+     *   <li>{@code callMethod} 的目标类（写成别的类、或者把方法名拼错,
+     *       它同样永远绿 —— ArchUnit 不会因为"这个方法根本没人调"而报错）。</li>
+     * </ul>
+     * 两种都编译得过、都跑得完, 区别只在于它们守着零件事。所以这里用一个
+     * <b>故意违规的类</b>跑同一条规则: {@link HumanInternalReadFixture} 不在 human/ 里,
+     * 也不是 {@code HumanActor}, 而它读了 {@code human.body()} —— 规则必须在它身上红。
+     *
+     * <p>夹具是测试作用域的类, 而上面 {@link #importClasses()} 的导入带了
+     * {@code DO_NOT_INCLUDE_TESTS} —— 所以它<b>不会</b>污染主规则集, 只在这里被显式导入。
+     * 这不是顺手: 正因为主规则集看不见它, 主规则才有可能是"永远绿"的,
+     * 而这条自检是唯一会发现那件事的地方。
+     */
+    @Test
+    void theHumanInternalReadRuleWouldActuallyCatchAViolation() {
+        JavaClasses fixture = new ClassFileImporter()
+                .importClasses(HumanInternalReadFixture.class);
+
+        EvaluationResult result = onlyTheActorAndTheHumanPackageMayReadHerInternals()
+                .evaluate(fixture);
+
+        assertTrue(result.hasViolation(),
+                "这条规则在一个人为的违规上不红 —— 说明判据写错了(谓词方向反了, "
+                        + "或者 callMethod 的目标类/方法名写错了), 而它现在的样子是"
+                        + "'人类读她内部'这件事根本没有人守。一个靠'什么都没做'通过的守卫"
+                        + "比没有守卫更糟: 它让人以为这里有人守着");
+    }
+
+    /**
+     * 阳性对照夹具 —— <b>一个故意读了她的内部的类</b>, 只被上面那条自检使用。
+     *
+     * <p>它<b>必须</b>留在测试作用域里, 而且要真读一次: 写成注释、或者写一个
+     * 永远走不到的分支, 字节码里就没有那条 {@code call}, 自检会以
+     * "规则没红"的姿态失败（而那正是它该有的反应 —— 它证的是规则认得出来,
+     * 不是"我写了一段像违规的文字"）。
+     *
+     * <p>它读的是 {@code Body.describe()} 而不是随便别的方法, 因为那正是
+     * 一条真实的越界读会做的事: 拿她身上的状态去拼一句人话给外面看
+     * —— 而这件事该走 {@code HumanContext.body()} 给的快照。
+     */
+    @SuppressWarnings("unused")
+    static final class HumanInternalReadFixture {
+
+        String peek(Human human) {
+            return human.body().describe();
+        }
     }
 
     // ─────────────────────────── 夹具 ───────────────────────────
