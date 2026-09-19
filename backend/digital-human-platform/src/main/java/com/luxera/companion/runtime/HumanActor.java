@@ -18,7 +18,9 @@ import com.luxera.companion.human.mind.cognition.ReasoningContext;
 import com.luxera.companion.human.mind.cognition.ReasoningResult;
 import com.luxera.companion.human.mind.decision.ActionIntent;
 import com.luxera.companion.human.mind.decision.Decision;
+import com.luxera.companion.human.mind.intention.Intention;
 import com.luxera.companion.human.mind.intention.IntentionContext;
+import com.luxera.companion.human.mind.intention.PlanItemIntention;
 
 import java.time.Instant;
 import java.util.ArrayList;
@@ -482,18 +484,28 @@ public final class HumanActor {
      * 本类里另写一个 {@code if (attended.isEmpty()) return;} —— 后者会让
      * "什么时候不用想"有两个实现, 而它们会漂移。
      *
-     * <h2>候选从哪来 —— 这里有一个真实的缺口, 写清楚</h2>
+     * <h2>候选从哪来（§8.5.13）</h2>
      * {@code MindDecisionPlanner} 的类注释写明"<b>不生成候选</b>, 候选从
-     * {@code ReasoningContext.candidates()} 来"。而本版里<b>还没有候选的生产者</b>:
-     * 设计文档里"提出候选意图"的那一步是 LLM 做的（§3.4.5 的分工表),
-     * 而 §8.5.0 明确禁止在心跳里调模型（一次外呼会把整条心跳拖住 ——
-     * 那是所有人的心跳, 不只是她的）。
+     * {@code ReasoningContext.candidates()} 来"。而在 §8.5.13 之前那个参数
+     * <b>没有生产者</b>: 递进去的是 {@code List.of()}, 于是候选恒空、
+     * {@code mind.decide} 从不被调用、{@code commandsSent} 恒为 0 ——
+     * <b>她只感知、不行动</b>。
      *
-     * <p>所以这里的形状是: <b>本类不发明候选, 它只负责把她的处境交给
-     * {@code Mind} 里装配的那个推理引擎</b>（可能是一个规则引擎, 也可能是一个
-     * 预取了 LLM 提议的引擎 —— 那是装配决定, 不是本类能知道的）。
-     * 今天它拿到的是一个"没什么可做"的结果, 于是 {@code decisionsDispatched} 不动;
-     * 候选接上之后, 这条路径不用改一个字节。
+     * <p>今天它由 {@link #candidatesAt} 供给: 一条<b>规则桥</b>
+     * ({@code PlanItem → Intention}), 把"她此刻日程上排着的那几件事"当成候选。
+     * 选它是因为它不用 LLM、确定性、可测 —— 而 §8.5.0 明确禁止在心跳里调模型
+     * （一次外呼会把整条心跳拖住, 那是<b>所有人</b>的心跳, 不只是她的）。
+     * 设计文档里"提出候选意图"的正主是 LLM（§3.4.5 的分工表),
+     * 而它是这条规则桥的<b>替代实现</b>, 不是前置条件。
+     *
+     * <p>本类的形状因此没变: <b>它不发明候选, 它只负责把她的处境与日程交给
+     * {@code Mind} 里装配的那个推理引擎</b>。LLM 提议器接上时,
+     * 换的是 {@code candidatesAt} 一个方法, 这条路径其余部分不用改一个字节。
+     *
+     * <p><b>而这条链今天是空转的, 理由不在本类</b>: 计划表恒空
+     * (没有生产者往它里面放项), 所以候选恒空。这件事必须说清楚 ——
+     * 它是"她安静地坐着"与"她坏了"在面板上长得一样的<b>唯一</b>原因。
+     * 见 {@code SimulationConfiguration} 的类注释与 {@code PlanItemIntention} 的类注释。
      *
      * <h2>为什么这里不调 {@code mind.speak(...)}</h2>
      * 因为它是<b>外呼</b>（语言引擎可能是 LLM), 而"决定"必须在不依赖任何一次
@@ -546,9 +558,14 @@ public final class HumanActor {
      */
     private void dispatchDecisions(List<AttendedPercept> attended, HumanRuntimeContext ctx) {
         Instant now = ctx.now();
-        IntentionContext situation = intentionAt(now);
+        // 处境只造一份, 三个读者共用它: 候选意图(构造时要带着它)、
+        // ReasoningContext.situation、以及 Mind.decide。分头造三份会让"她这一刻
+        // 有没有空"在同一拍里有三个答案 —— 而那正是 §8.5.4 要消灭的那类不一致,
+        // 只不过换成了一条线程内的版本。
+        PlanningContext planning = planningAt(now);
+        IntentionContext situation = IntentionContext.from(planning);
         ReasoningContext reasoning = new ReasoningContext(
-                now, attended, List.of(), List.of(), Set.of(), situation, Map.of());
+                now, attended, candidatesAt(now, planning), List.of(), Set.of(), situation, Map.of());
 
         if (!reasoning.hasAnythingToThinkAbout()) {
             return;
@@ -584,7 +601,14 @@ public final class HumanActor {
     }
 
     /**
-     * 她此刻的处境投影 —— 决定要用它做可行性判断。
+     * 她此刻的处境 —— <b>决策侧的原始形状</b>, 而 {@code IntentionContext} 是它的投影。
+     *
+     * <h2>为什么本类要握着 {@code PlanningContext} 本身, 而不只留那份投影</h2>
+     * 因为候选意图需要它。{@link PlanItemIntention} 桥的是一条<b>计划项</b>, 而计划项的
+     * 可行性判定与动作拆分收的都是 {@code PlanningContext}(见 {@code PlanIntent})。
+     * 从 {@code IntentionContext} 回不到 {@code PlanningContext} —— 那个方向有损
+     * (投影里只有一句 {@code humanSummary} 字符串, 而计划侧要的是一个快照对象),
+     * 所以唯一的办法是<b>在造投影之前先留着原件</b>。
      *
      * <h2>为什么能力清单取自 {@code ActionFabric} 而不是世界</h2>
      * 因为"她此刻做得了什么"的答案在世界那边（设备在不在线、能力有没有被停用),
@@ -597,25 +621,56 @@ public final class HumanActor {
      * 那是 {@code Life} 给重排器看的同一份人话摘要, 这里不另造一句:
      * 两句关于同一个她的处境的话, 迟早会有一句是错的。
      */
-    private IntentionContext intentionAt(Instant now) {
+    private PlanningContext planningAt(Instant now) {
         List<String> available = actionFabric.availableCapabilities(now).stream()
                 .map(capability -> capability.key())
                 .toList();
 
-        // 走 PlanningContext → IntentionContext.from 这条桥, 而不是直接 new 一个
-        // IntentionContext: 那条桥是"计划侧看到的她"与"她要判断的事"之间唯一的转换点,
-        // 自己拼一个会让"她看到的摘要"与"重排器看到的摘要"有两个来源(而它们都来自
-        // 同一个 Life.humanSnapshot(), 所以现在一致、将来不一定)。
-        //
         // 桥上没有的两样东西, 刻意不补:
         //  - 地点 —— 她"此刻在哪儿"只有世界知道(§3.4.2 不许 human/ 读它), 而计划侧
         //    要它时是从 attributes 里带过来的。这里没有那个来源, 于是它保持空 ——
         //    空比一个猜出来的地点好: 猜出来的地点会让"她没去那个地方"变成一个无声的错误;
         //  - 约束列表 —— 那是重排器要的东西(PlanningContext 里有), 与"这件事此刻做不做得了"
         //    无关, 而 IntentionContext.from 已经明确丢掉它。
-        PlanningContext planning = PlanningContext.minimal(now, human.life().humanSnapshot())
+        return PlanningContext.minimal(now, human.life().humanSnapshot())
                 .withCapabilities(Set.copyOf(available));
-        return IntentionContext.from(planning);
+    }
+
+    /**
+     * <b>d 步的候选: 她此刻日程上排着的那几件事。</b>见 {@link PlanItemIntention}
+     * 与 §8.5.13 —— 这是设计文档指定的那第一条"规则桥"。
+     *
+     * <h2>为什么用 {@code activeAt} 而<b>绝对不能用</b> {@code dueAt}</h2>
+     * 这是一个会静默损坏仿真的陷阱, 不是风格问题:
+     * {@code PlanBoard.dueAt(moment)} 在返回结果之<b>前</b>把每一项记进内部的
+     * {@code triggered} 表(它的类注释写明去重就该在那里做, 因为调用方每个 tick 都会问)。
+     * 于是从本类调一次 {@code dueAt} =
+     * <b>把"到点了"这件事从调度器手里偷走</b> —— {@code PlanScheduler} 随后再问
+     * 就什么都问不到了, 那一项<b>永远不会被触发</b>。症状是她按计划该做的事
+     * 一件都没发生, 而没有任何异常、没有任何计数变红。
+     *
+     * <p>{@code activeAt} 是纯查询(它只读当前那一版, 不碰 {@code triggered}),
+     * 而它回答的也正是本步要问的问题: "这一刻她归哪几项"。语义上它比
+     * "到点了"更贴切 —— 她该不该去做某一项, 是决定引擎要判断的事;
+     * 本类只负责把"日程上排着的事"摆到她面前。
+     *
+     * <h2>为什么每一拍都重新包一遍, 一个都不缓存</h2>
+     * 因为 {@link PlanItemIntention} <b>是一张快照</b>(见它的类注释): 它握着的是
+     * 构造那一刻的处境与那一版计划项。重排会让老的计划项变成 {@code SUPERSEDED},
+     * 而一个被缓存下来的桥<b>不会知道</b>, 却会继续按老样子回答。
+     * 重读的代价是一次内存里的区间查询 —— 与 {@code PlanScheduler} 选择
+     * "轮询而不是给每一项挂定时器"是同一笔账。
+     *
+     * <h2>空列表是正常的, 而且它意味着"世界还没有内容", 不是"她坏了"</h2>
+     * 今天 {@code PlanStore.appendRevision} 全仓没有一个生产调用者
+     * (见 {@code SimulationConfiguration} 的类注释), 所以计划表恒空、
+     * 候选恒空、{@code commandsSent} 恒为 0 —— <b>她会坐在座位上, 而世界无事发生</b>。
+     * 本方法因此不假装自己有内容: 它返回什么, 取决于计划表里真的有什么。
+     */
+    private List<Intention> candidatesAt(Instant now, PlanningContext planning) {
+        return human.life().plan().activeAt(now).stream()
+                .map(item -> (Intention) new PlanItemIntention(item, planning))
+                .toList();
     }
 
     // ─────────────────────────── 门面 ───────────────────────────

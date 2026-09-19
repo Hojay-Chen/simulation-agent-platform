@@ -65,15 +65,48 @@ public final class IntentionPlanIntent implements PlanIntent {
      * <p>返回的是 {@link PlanIntent.Feasibility}, 不是
      * {@link com.luxera.companion.human.mind.intention.Feasibility} ——
      * 转换就在这一行发生, 见 {@code Feasibility#toPlan()}。
+     *
+     * <h2>意图返回 null 时怎么走</h2>
+     * 不能直接 {@code .toPlan()} —— 那会在本行抛一个
+     * {@code NullPointerException}, 而栈顶指向的是适配器, 不是那个没实现
+     * {@code evaluate} 的意图。于是"某个意图忘了给判定"看起来像"适配器坏了",
+     * 排查要从这里往回翻三层。
+     *
+     * <p>按 {@code Feasibility#fromPlan(null)} 已经定下的语义处理:
+     * <b>null 视为"从来没判过"</b>, 换成一条指名道姓的不可行。
+     * 两个方向对 null 的看法必须一致 —— 否则"没判过"这件事
+     * 从 mind 侧过来会崩、从 plan 侧过来会被判成不可行, 而它是同一件事。
      */
     @Override
     public PlanIntent.Feasibility evaluate(PlanningContext context) {
-        return intention.evaluate(IntentionContext.from(context)).toPlan();
+        // 用全限定名: 本类实现了 PlanIntent, 于是简单名 Feasibility 在这里
+        // 先解析到继承来的 PlanIntent.Feasibility, 而不是同包的这个。
+        com.luxera.companion.human.mind.intention.Feasibility verdict =
+                intention.evaluate(IntentionContext.from(context));
+        if (verdict == null) {
+            return PlanIntent.Feasibility.no("这件事没有给出可行性判定 —— 意图 "
+                    + intention.id().value() + " 的 evaluate 返回了 null。"
+                    + "这与'判过说不行'不是同一件事: 前者是没实现, 后者是业务结论");
+        }
+        return verdict.toPlan();
     }
 
+    /**
+     * 拆成哪几步 —— 转发给意图。
+     *
+     * <p>{@code actions} 返回 null 与 {@code evaluate} 返回 null 的处理<b>刻意不同</b>:
+     * 这里抛而不是翻译。因为"拆不出步骤"有一个合法的表达 —— 空列表
+     * (见 {@code Intention#actions}), 所以 null <b>不携带任何业务含义</b>,
+     * 它只可能是编程错误。而放它过去的后果是它一路走到
+     * {@code DecisionEngine} 的 {@code actions().isEmpty()} 上才炸,
+     * 那时现场已经离肇事处很远了。
+     */
     @Override
     public List<PlanIntent.ActionIntent> decompose(PlanningContext context) {
-        return intention.actions(IntentionContext.from(context));
+        List<PlanIntent.ActionIntent> steps = intention.actions(IntentionContext.from(context));
+        return Objects.requireNonNull(steps, "意图 " + intention.id().value()
+                + " 的 actions() 返回了 null —— 拆不出步骤请返回空列表, "
+                + "null 会被 DecisionEngine 读成一次崩溃而不是'这一个是原子意图'");
     }
 
     @Override

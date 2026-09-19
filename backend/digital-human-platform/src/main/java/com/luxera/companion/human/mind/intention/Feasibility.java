@@ -89,9 +89,42 @@ public record Feasibility(boolean feasible, String reason, List<String> missing)
         return new Feasibility(false, reason, missing);
     }
 
-    /** 到计划侧的说法 —— 两个类型之间<b>唯一</b>的转换点。 */
+    /**
+     * 到计划侧的说法 —— 本方向的<b>唯一</b>转换点。
+     *
+     * <p>两个类型之间一共有<b>两条</b>边, 一边一条: 本方法去, {@link #fromPlan} 回。
+     * 写成"每个方向各一条"而不是"跨包随便转", 理由与只有一条时相同 ——
+     * 转换总要丢信息, 收在一处丢的东西才是可数的。见 {@code IntentionPlanIntent}
+     * 与 {@code PlanItemIntention}: 那两条边各自只走自己这一向。
+     */
     public PlanIntent.Feasibility toPlan() {
         return new PlanIntent.Feasibility(feasible, reason, missing);
+    }
+
+    /**
+     * 从计划侧的说法回来 —— <b>计划项要被当成候选意图时走的这一条</b>。
+     *
+     * <h2>为什么必须有它, 而不能在调用处 new 一个</h2>
+     * 它是 {@link #toPlan()} 的镜像, 存在的理由与那条完全对称: 谁在别处
+     * {@code new Feasibility(f.feasible(), f.reason(), f.missing())}, 谁就让
+     * "可行性在两个类型之间怎么搬"有了第二个实现 —— 而那正是本类那张"唯一转换点"
+     * 的注释要防的事。见 {@code PlanItemIntention} 关于"计划项为什么会被当成意图"。
+     *
+     * <p>{@code missing} 照抄, <b>不做任何归一化</b>: 它装的是能力 key 之类的字符串,
+     * 计划侧拿它推导前置项(见 {@code PlanIntent.Feasibility#missing} 的说明),
+     * 而"这条缺失是计划侧说的"这件事在诊断时要能看出来。
+     *
+     * @param planFeasibility 计划侧的判定。{@code null} 视为"从来没判过",
+     *                        返回一条说明这件事的不可行 —— 换成抛异常会让
+     *                        "某个意图压根没实现 evaluate" 表现为一次崩溃
+     */
+    public static Feasibility fromPlan(PlanIntent.Feasibility planFeasibility) {
+        if (planFeasibility == null) {
+            return Feasibility.no("这件事没有给出可行性判定 —— "
+                    + "计划侧的 evaluate 返回了 null, 而'没判过'与'判过说不行'不是同一件事");
+        }
+        return new Feasibility(planFeasibility.feasible(), planFeasibility.reason(),
+                planFeasibility.missing());
     }
 
     public String describe() {
