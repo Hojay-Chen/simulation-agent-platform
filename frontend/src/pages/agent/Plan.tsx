@@ -4,7 +4,7 @@ import {
   ApiError,
   getLife,
   interruptPlan,
-  listScheduled,
+  listWakeups,
   type InterruptResult,
   type PlanActivityView,
 } from '@/api/client'
@@ -54,7 +54,7 @@ import { typeZh } from './Today'
 export function Plan({ agentId }: { agentId: string }) {
   const now = useNow()
   const life = useAsync(() => getLife(agentId), [agentId])
-  const scheduled = useAsync(() => listScheduled(agentId), [agentId])
+  const wakeups = useAsync(() => listWakeups(agentId), [agentId])
 
   const activities = useMemo(() => life.data?.todayActivities ?? [], [life.data])
   const after = useMemo(() => snapshot(activities), [activities])
@@ -94,7 +94,7 @@ export function Plan({ agentId }: { agentId: string }) {
       const r = await interruptPlan(agentId, title, reason.trim() || undefined)
       setResult(r)
       life.reload()
-      scheduled.reload()
+      wakeups.reload()
     } catch (e) {
       setErr(e instanceof ApiError ? e.message : String(e))
       // 请求失败就把那份"改之前"丢掉 —— 留着它会和没变过的现况比出一张全 "没动" 的表,
@@ -110,7 +110,7 @@ export function Plan({ agentId }: { agentId: string }) {
       {/* ── 此刻 ─────────────────────────────────────────────── */}
       <Panel
         title="现在的计划表"
-        action={<Button variant="ghost" onClick={() => { life.reload(); scheduled.reload() }}>
+        action={<Button variant="ghost" onClick={() => { life.reload(); wakeups.reload() }}>
           <RefreshCw size={13} />刷新
         </Button>}
       >
@@ -270,28 +270,28 @@ export function Plan({ agentId }: { agentId: string }) {
       )}
 
       <div className="grid gap-5 lg:grid-cols-2">
-        {/* ── 排程 ───────────────────────────────────────────── */}
-        <Panel title="按计划排下的动作">
-          <ErrorNote error={scheduled.error ? describeError(scheduled.error) : null} />
-          {scheduled.loading && !scheduled.data && <Empty>读取中…</Empty>}
-          {scheduled.data && scheduled.data.length === 0 && (
+        {/* ── 闹钟 ───────────────────────────────────────────── */}
+        <Panel title="她排下的闹钟">
+          <ErrorNote error={wakeups.error ? describeError(wakeups.error) : null} />
+          {wakeups.loading && !wakeups.data && <Empty>读取中…</Empty>}
+          {wakeups.data && wakeups.data.length === 0 && (
             <Empty>
-              没有待执行的排程。
+              她没在等任何时刻。
               <span className="mt-1 block text-[11px] leading-relaxed">
-                一个空列表在这里是**正常的**: 排程只会被计划表里那些"到了点要触发"的事
-                填满, 而她今天可能一件都没有。
+                一个空列表在这里是**正常的**: 闹钟只会被计划表里那些"到了点要触发"的事,
+                以及她自己排下的意图与未了的事填满 —— 而她今天可能一件都没有。
               </span>
             </Empty>
           )}
-          {scheduled.data && scheduled.data.length > 0 && (
+          {wakeups.data && wakeups.data.length > 0 && (
             <ul className="divide-y divide-line">
-              {scheduled.data.map((s, i) => (
-                <li key={`${s.type}-${s.executeAt}-${i}`} className="flex items-baseline gap-3 py-2 text-xs">
-                  <span className="w-12 shrink-0 font-mono text-ink tnum">{fmtClock(s.executeAt ?? null)}</span>
-                  <span className="min-w-0 flex-1 truncate text-ink-soft">{s.type ?? '(无类型)'}</span>
-                  {typeof s.retry === 'number' && s.retry > 0 && (
-                    <span className="shrink-0 text-warn">重试 {s.retry}</span>
-                  )}
+              {wakeups.data.map((w, i) => (
+                <li key={`${w.source}-${w.wakeAt}-${i}`} className="flex items-baseline gap-3 py-2 text-xs">
+                  <span className="w-12 shrink-0 font-mono text-ink tnum">{fmtClock(w.wakeAt ?? null)}</span>
+                  <span className="min-w-0 flex-1 truncate text-ink-soft">
+                    {w.reason || w.eventType || '(没有理由)'}
+                  </span>
+                  {w.source && <span className="shrink-0 font-mono text-[11px] text-ink-faint">{w.source}</span>}
                 </li>
               ))}
             </ul>

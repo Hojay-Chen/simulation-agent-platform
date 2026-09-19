@@ -16,12 +16,16 @@ import java.util.Map;
 import java.util.stream.Collectors;
 
 /**
- * 诊断端点(只读): 观察 V11/V12 运行时内部 —— Agent 痕迹 / 排程动作 / 待复查消息 / 世界事件 / V11 开关状态。
+ * 诊断端点(只读): 观察 V11/V12 运行时内部 —— Agent 痕迹 / 待复查消息 / 世界事件 / V11 开关状态。
  * 用于验证与调试, 不影响主流程。
  *
  * <p>这里的 {@code /v5/**} 前缀是 V11 那一代的路径, {@code /agents} 读的是
  * {@link CognitiveAgentRegistry}。V2.2 的读面在 {@code /api/agents} 一族, 由
  * {@code AgentRegistry} 供数(那个装的是数字人, 不是处理器)—— 两代各说各的, 不共用前缀。
+ *
+ * <p>曾经这里还有一个 {@code /scheduled} 读的是 {@code scheduled_actions}。那张表与它的
+ * 服务/轮询/分发器一并删掉了: 全仓零 handler 注册, 于是每一条写进去的记录都必然变成
+ * FAILED —— 一个只产出失败的读面不该留着让人以为它在说什么。
  */
 @RestController
 @RequestMapping("/api/companions/{companionId}/v5")
@@ -30,8 +34,8 @@ public class DiagnosticController {
     private final CurrentUser currentUser;
     private final CompanionService companionService;
     private final AgentTraceService traceService;
-    private final ScheduledActionService scheduledActionService;
     private final PendingMessageService pendingMessageService;
+    private final com.luxera.companion.wakeup.AgentWakeupRepository wakeupRepository;
     private final WorldEventLogService worldEventLogService;
     private final CognitiveAgentRegistry cognitiveAgents;
     private final com.luxera.companion.llm.LlmCallRepository llmCallRepository;
@@ -46,8 +50,9 @@ public class DiagnosticController {
     private final com.luxera.companion.runtime.v11.CognitionDecisionRecorder cognitionRecorder;
 
     public DiagnosticController(CurrentUser currentUser, CompanionService companionService,
-                                  AgentTraceService traceService, ScheduledActionService scheduledActionService,
+                                  AgentTraceService traceService,
                                   PendingMessageService pendingMessageService,
+                                  com.luxera.companion.wakeup.AgentWakeupRepository wakeupRepository,
                                   WorldEventLogService worldEventLogService,
                                   CognitiveAgentRegistry cognitiveAgents,
                                   com.luxera.companion.llm.LlmCallRepository llmCallRepository,
@@ -63,8 +68,8 @@ public class DiagnosticController {
         this.currentUser = currentUser;
         this.companionService = companionService;
         this.traceService = traceService;
-        this.scheduledActionService = scheduledActionService;
         this.pendingMessageService = pendingMessageService;
+        this.wakeupRepository = wakeupRepository;
         this.worldEventLogService = worldEventLogService;
         this.cognitiveAgents = cognitiveAgents;
         this.llmCallRepository = llmCallRepository;
@@ -109,20 +114,47 @@ public class DiagnosticController {
         }).collect(Collectors.toList());
     }
 
-    @GetMapping("/scheduled")
-    public List<Map<String, Object>> scheduled(@PathVariable String companionId) {
+    /**
+     * §18.1 —— <b>她排下的闹钟</b>: "她下一次什么时候醒, 因为什么"。
+     *
+     * <p>这是 {@code agent_schedule} 的唯一读出口。它存在的理由与那张表被造出来的理由
+     * 是同一条: 排期必须是<b>看得见的</b>。一个看不见的闹钟与一个不存在的闹钟在运维上
+     * 无法区分 —— "她再也没提过那件事"到底是没排上, 还是排了没响, 还是响了她没理?
+     * 三个问题里只有第一个能靠这个端点回答, 而剩下两个要靠轨迹。
+     *
+     * <p>这里曾经读的是另一张表({@code scheduled_actions})。那张表全仓零 handler 注册,
+     * 于是每条写进去的记录都必然变成 FAILED —— 端点返回得再整齐, 它显示的也只是一串失败。
+     * 现在读的是真正在响的那一张。
+     *
+     * <p><b>只列 PENDING</b>: 响过的({@code FIRED})与取消掉的({@code CANCELLED})是历史,
+     * 它们由 {@code AgentWakeupJob.purgeFinished} 按保留天数清掉。把历史也列出来会让
+     * "她还等着什么"这件事淹没在"她等过什么"里。
+     */
+    @GetMapping("/wakeups")
+    public List<Map<String, Object>> wakeups(@PathVariable String companionId) {
         String userId = currentUser.requireUserId();
         requireOwned(userId, companionId);
-        return scheduledActionService.pending(companionId).stream().map(a -> {
-            Map<String, Object> m = new HashMap<>();
-            m.put("type", a.getActionType());
-            m.put("executeAt", a.getExecuteAt());
-            m.put("payload", a.getPayload());
-            m.put("retry", a.getRetryCount());
-            return m;
-        }).collect(Collectors.toList());
+        return wakeupRepository
+                .findByAgentIdAndStatusOrderByWakeAtAsc(companionId, com.luxera.companion.wakeup.AgentWakeup.S_PENDING)
+                .stream().map(w -> {
+                    Map<String, Object> m = new LinkedHashMap<>();
+                    m.put("wakeAt", w.getWakeAt());
+                    m.put("eventType", w.getEventType() == null ? null : w.getEventType().name());
+                    m.put("source", w.getSourceKey());
+                    m.put("reason", w.getReason());
+                    return m;
+                }).collect(Collectors.toList());
     }
 
+    /**
+     * 她决定待会儿再看的那几条 —— <b>唯一一个会吐消息正文的读面</b>(正文只在她自己
+     * 已经看过、并决定推后的那一条上, 所以它不是泄漏)。运维面的解释见前端 {@code Runtime.tsx}。
+     *
+     * <p>{@code reviewCount} / {@code maxReviews} 一起给: 复查次数不是内部计数器, 它回答
+     * 的是运维真正会问的那个问题 —— "这条她是在想, 还是已经忘了"。到 {@code maxReviews}
+     * 的那一条<b>不会</b>出现在这里(它已经 EXPIRED), 所以两个数字放在一起看才能读出
+     * "还剩几次"。
+     */
     @GetMapping("/pending-messages")
     public List<Map<String, Object>> pendingMessages(@PathVariable String companionId) {
         String userId = currentUser.requireUserId();
@@ -133,6 +165,9 @@ public class DiagnosticController {
             m.put("content", p.getSenderText());
             m.put("nextReviewAt", p.getNextReviewAt());
             m.put("reason", p.getReason());
+            m.put("reviewCount", p.getReviewCount());
+            m.put("maxReviews", PendingMessageService.MAX_REVIEWS);
+            m.put("frictionType", p.getFrictionType());
             return m;
         }).collect(Collectors.toList());
     }

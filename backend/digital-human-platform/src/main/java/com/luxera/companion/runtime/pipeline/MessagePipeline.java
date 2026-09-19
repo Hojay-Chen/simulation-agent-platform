@@ -22,7 +22,6 @@ import com.luxera.companion.phone.PhoneStateService;
 import com.luxera.companion.relationship.Relationship;
 import com.luxera.companion.relationship.RelationshipService;
 import com.luxera.companion.runtime.AgentTraceService;
-import com.luxera.companion.runtime.ScheduledActionService;
 import com.luxera.companion.runtime.agent.brain.BrainAgent;
 import com.luxera.companion.runtime.agent.brain.BrainContext;
 import com.luxera.companion.runtime.agent.brain.BrainDecision;
@@ -84,7 +83,6 @@ public class MessagePipeline {
     private final MemoryService memoryService;
     private final MessageDeliveryService deliveryService;
     private final PendingMessageService pendingMessageService;
-    private final ScheduledActionService scheduledActionService;
     private final ChatWorldPort chatWorld;
     private final AgentTraceService traceService;
     private final ThoughtService thoughtService;
@@ -97,7 +95,7 @@ public class MessagePipeline {
                              CompanionService companionService, CompanionSchedule schedule,
                              InteractionPolicyEngine interactionPolicy, DrivesService drivesService,
                              MemoryService memoryService, MessageDeliveryService deliveryService,
-                             PendingMessageService pendingMessageService, ScheduledActionService scheduledActionService,
+                             PendingMessageService pendingMessageService,
                              ChatWorldPort chatWorld, AgentTraceService traceService,
                              ThoughtService thoughtService,
                              MemoryRecallProbabilityService recallProbabilityService) {
@@ -117,7 +115,6 @@ public class MessagePipeline {
         this.memoryService = memoryService;
         this.deliveryService = deliveryService;
         this.pendingMessageService = pendingMessageService;
-        this.scheduledActionService = scheduledActionService;
         this.chatWorld = chatWorld;
         this.traceService = traceService;
         this.thoughtService = thoughtService;
@@ -268,8 +265,10 @@ public class MessagePipeline {
             LocalDateTime reviewAt = now.plusMinutes(reviewDelayMinutes(brainDecision));
             pendingMessageService.defer(last, companionId, userId, brainDecision.reasonFactors() == null
                     || brainDecision.reasonFactors().isEmpty() ? "暂时不想回" : String.join(";", brainDecision.reasonFactors()), reviewAt);
-            scheduledActionService.schedule(companionId, ScheduledActionService.RE_EVALUATE_MESSAGE,
-                    reviewAt, Map.of("pendingMessageId", last.getId()));
+            // 排期就到上面那一行为止 —— defer 写进 pending 行的 next_review_at, 而
+            // PendingMessageReevaluationJob 扫的正是那一列。这里曾经**另外**排一个
+            // scheduled_action, 而那个机制全仓零 handler 注册, 于是它 100% 变成一条
+            // FAILED 记录: 同一件事在一张活着表里排了期, 又在另一张死表里记了一笔失败。
             // §31 Unfinished Thought: "想回复但被打断/暂时没回" → 记入未完成想法, 稍后可能主动回来补
             recordUnfinishedThought(companionId, decisionText, brainDecision);
             return new PipelineResult(PipelineResult.Outcome.DEFERRED, brainDecision, emotion,

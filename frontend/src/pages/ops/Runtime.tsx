@@ -5,7 +5,7 @@ import {
   getRegisteredAgents,
   getV11,
   listPendingMessages,
-  listScheduled,
+  listWakeups,
   listTraces,
   type V11ShadowView,
 } from '@/api/client'
@@ -66,8 +66,8 @@ function Body() {
     () => (agentId ? listTraces(agentId) : Promise.resolve<Record<string, unknown>[]>([])),
     [agentId],
   )
-  const scheduled = useAsync(
-    () => (agentId ? listScheduled(agentId) : Promise.resolve([])),
+  const wakeups = useAsync(
+    () => (agentId ? listWakeups(agentId) : Promise.resolve([])),
     [agentId],
   )
   const registered = useAsync(
@@ -76,7 +76,7 @@ function Body() {
   )
 
   function reloadAll() {
-    v11.reload(); metrics.reload(); traces.reload(); scheduled.reload(); registered.reload()
+    v11.reload(); metrics.reload(); traces.reload(); wakeups.reload(); registered.reload()
   }
 
   return (
@@ -132,26 +132,39 @@ function Body() {
             <TracesPanel agentId={agentId} state={traces} />
 
             <Panel
-              title="按计划排下的动作"
-              action={<Button variant="ghost" onClick={scheduled.reload}><RefreshCw size={13} />刷新</Button>}
+              title="她排下的闹钟"
+              action={<Button variant="ghost" onClick={wakeups.reload}><RefreshCw size={13} />刷新</Button>}
             >
-              {scheduled.error && <p className="text-sm text-danger">{describeError(scheduled.error)}</p>}
-              {scheduled.data && scheduled.data.length === 0 && (
+              {wakeups.error && <p className="text-sm text-danger">{describeError(wakeups.error)}</p>}
+              {wakeups.data && wakeups.data.length === 0 && (
                 <Empty>
-                  没有待执行的排程。
+                  她没在等任何时刻。
                   <span className="mt-1 block text-[11px] leading-relaxed">
-                    空列表在这里是**正常的**: 排程只会被计划表里"到了点要触发"的事填满。
+                    空列表在这里是**正常的**: 闹钟只被她自己排下 —— 一个意图到点、
+                    一条未了的事、一段沉默太久、计划表里"到了点要触发"的某件事。
+                    她今天可能一件都没有。
                   </span>
                 </Empty>
               )}
-              {scheduled.data && scheduled.data.length > 0 && (
+              {wakeups.data && wakeups.data.length > 0 && (
                 <ul className="divide-y divide-line">
-                  {scheduled.data.map((s, i) => (
-                    <li key={`${s.type}-${s.executeAt}-${i}`} className="flex items-baseline gap-3 py-2 text-xs">
-                      <span className="w-12 shrink-0 font-mono text-ink tnum">{fmtClock(s.executeAt ?? null)}</span>
-                      <span className="min-w-0 flex-1 truncate text-ink-soft">{s.type ?? '(无类型)'}</span>
-                      {typeof s.retry === 'number' && s.retry > 0 && (
-                        <Chip tone="warn">重试 {s.retry}</Chip>
+                  {wakeups.data.map((w, i) => (
+                    <li key={`${w.source}-${w.wakeAt}-${i}`} className="py-2 text-xs">
+                      <div className="flex items-baseline gap-3">
+                        <span className="w-12 shrink-0 font-mono text-ink tnum">{fmtClock(w.wakeAt ?? null)}</span>
+                        <span className="min-w-0 flex-1 truncate text-ink-soft">
+                          {w.reason || w.eventType || '(没有理由)'}
+                        </span>
+                        {w.source && <Chip>{w.source}</Chip>}
+                      </div>
+                      {/*
+                        理由与事件类型分开显示: 前者是她自己的话(为什么等), 后者是系统
+                        的分类(等到了要干什么)。合起来看才读得出"这个闹钟是谁排的"。
+                      */}
+                      {w.reason && w.eventType && (
+                        <span className="mt-0.5 block pl-[3.75rem] font-mono text-[11px] text-ink-faint">
+                          {w.eventType}
+                        </span>
                       )}
                     </li>
                   ))}
@@ -279,6 +292,30 @@ function ShadowPanel({ state }: { state: ReturnType<typeof useAsync<V11ShadowVie
 
 // ── 待处理消息 ──────────────────────────────────────────────────────────────
 
+/**
+ * 摩擦类型 → 人话。
+ *
+ * 这三个值说的不是"她有多忙", 而是**卡在哪一步** —— 处置完全不同:
+ * `SEEN_NO_REPLY` 是她看见了但当时不想回(再等等就好); `WANTED_TO_REPLY_FORGOT`
+ * 是她想过要回、被别的事打断然后忘了(她的复查窗口本来就拉得更长);
+ * `REPLIED_HALFWAY` 是回了半句被打断(接上就行)。
+ *
+ * 未知值原样显示: 服务端加了第四种而这里没跟上时, 运维该看到那个生词,
+ * 而不是被一个"其他"糊过去。
+ */
+function frictionLabel(t: string): string {
+  switch (t) {
+    case 'SEEN_NO_REPLY':
+      return '看到了没回'
+    case 'WANTED_TO_REPLY_FORGOT':
+      return '想回、被打断忘了'
+    case 'REPLIED_HALFWAY':
+      return '回了一半被打断'
+    default:
+      return t
+  }
+}
+
 function PendingPanel({ agentId }: { agentId: string }) {
   const pending = useAsync(() => listPendingMessages(agentId), [agentId])
   const [open, setOpen] = useState<ReadonlySet<string>>(() => new Set())
@@ -309,6 +346,10 @@ function PendingPanel({ agentId }: { agentId: string }) {
             注意"推后"和"没理会"是两件事: 前者在这张表里, 后者**不在这里** ——
             她压根没感知到的消息不会产生一条待办。
           </span>
+          <span className="mt-1 block text-[11px] leading-relaxed">
+            这条队列**有终点**: 复查到上限她还没回, 这一条就变成"她忘了"并离开这里。
+            所以"列表变短"既可能是她回了, 也可能是她放下了 —— 两者在别处(对话与轨迹)分得清。
+          </span>
         </Empty>
       )}
 
@@ -324,6 +365,24 @@ function PendingPanel({ agentId }: { agentId: string }) {
                   <span className="text-[11px] text-ink-faint">
                     下次再看 {fmtClock(m.nextReviewAt ?? null)}
                   </span>
+                </div>
+                <div className="mt-1 flex flex-wrap items-baseline gap-x-3 gap-y-1">
+                  {/*
+                    复查次数不是内部计数器 —— 它回答的是运维真正会问的那句话:
+                    "这条她是在想, 还是已经忘了"。到上限的那一条**不在这个列表里**
+                    (它已经 EXPIRED), 所以"还剩几次"是这里唯一读得出来的紧迫度。
+                  */}
+                  {m.reviewCount !== undefined && (
+                    <span className="text-[11px] text-ink-faint">
+                      复查 {m.reviewCount}/{m.maxReviews ?? '?'} 次
+                      {m.maxReviews !== undefined && m.reviewCount >= m.maxReviews - 1 && (
+                        <span className="ml-1 text-warn">最后一次</span>
+                      )}
+                    </span>
+                  )}
+                  {m.frictionType && (
+                    <span className="text-[11px] text-ink-faint">{frictionLabel(m.frictionType)}</span>
+                  )}
                 </div>
                 {m.reason && (
                   <p className="mt-1 text-xs text-ink-soft">她的理由: {m.reason}</p>

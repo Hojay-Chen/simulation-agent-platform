@@ -921,20 +921,40 @@ export function getRelationshipProjection(
   return request<RelationshipProjection>(`/api/v10/relationship/projection?${q}`)
 }
 
-/** 一条待执行的排程动作。 */
-export interface ScheduledAction {
-  type?: string
-  executeAt?: string
-  payload?: unknown
-  retry?: number
+/**
+ * 她排下的一个闹钟 —— "她下一次什么时候醒, 因为什么"。
+ *
+ * <p>这是 `agent_schedule` 的唯一读出口(§18.1)。它取代了曾经那个 `ScheduledAction`:
+ * 旧的那个读的是一张全仓零 handler 注册的表, 每条记录都必然变成 FAILED,
+ * 于是端点显示的只是一串失败。
+ *
+ * <p>`source` 是"同一件事"的身份(见 `AgentWakeupService` 的 SRC_* 常量): 她本来说
+ * "一小时后", 又说"算了三小时后", 那是同一个闹钟被推后了 —— 所以这里**不会有**
+ * 两行同 source 的记录, 而"她改过主意"这件事在数据上就看不见了(它在轨迹里)。
+ */
+export interface AgentWakeup {
+  /** 到点时刻。 */
+  wakeAt?: string
+  /** 醒来要处理的事件类型(`AgentEventType`)。 */
+  eventType?: string
+  /** 来源键 —— 排期去重的身份。 */
+  source?: string
+  /** 为什么排它(她自己的理由, 截到 160 字符)。 */
+  reason?: string
 }
 
-/** 她按计划表排下的、还没到点或还没执行完的动作。 */
-export function listScheduled(id: string): Promise<ScheduledAction[]> {
-  return request<ScheduledAction[]>(`/api/companions/${encodeURIComponent(id)}/v5/scheduled`)
+/** 她还没醒的那些闹钟, 按时刻升序。已响/已取消的不在这里。 */
+export function listWakeups(id: string): Promise<AgentWakeup[]> {
+  return request<AgentWakeup[]>(`/api/companions/${encodeURIComponent(id)}/v5/wakeups`)
 }
 
-/** 一条"她决定待会儿再看"的消息。 */
+/**
+ * 一条"她决定待会儿再看"的消息。
+ *
+ * <p>(这里曾经还有一个 {@code ScheduledAction} / {@code listScheduled} 对着
+ * {@code /v5/scheduled}。那个端点读的是一张全仓零 handler 注册的表 —— 每条记录都
+ * 必然变成 FAILED, 于是那个读面唯一能显示的就是一串失败。表与端点都已删除。)
+ */
 export interface PendingMessage {
   messageId?: string
   /**
@@ -951,6 +971,17 @@ export interface PendingMessage {
   content?: string
   nextReviewAt?: string
   reason?: string
+  /**
+   * 已经复查过几次 / 一共允许几次。
+   *
+   * 两个数一起看才读得出运维真正会问的那句话: "这条她是在想, 还是已经忘了"。
+   * 到 `maxReviews` 的那一条**不在这个列表里**(它已经 EXPIRED), 所以
+   * `reviewCount` 逼近 `maxReviews` 就是"最后一次机会"。
+   */
+  reviewCount?: number
+  maxReviews?: number
+  /** 为什么没回: `SEEN_NO_REPLY` / `WANTED_TO_REPLY_FORGOT` / `REPLIED_HALFWAY`。 */
+  frictionType?: string
 }
 
 export function listPendingMessages(id: string): Promise<PendingMessage[]> {
