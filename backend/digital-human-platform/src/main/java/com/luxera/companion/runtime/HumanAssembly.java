@@ -7,6 +7,8 @@ import com.luxera.companion.human.Human;
 import com.luxera.companion.human.HumanId;
 import com.luxera.companion.human.body.Body;
 import com.luxera.companion.human.life.Life;
+import com.luxera.companion.human.life.activity.Activity;
+import com.luxera.companion.human.life.plan.PlanRevision;
 import com.luxera.companion.human.life.plan.PlanningContext;
 import com.luxera.companion.human.mind.Mind;
 import com.luxera.companion.human.mind.cognition.MindDecisionPlanner;
@@ -92,13 +94,20 @@ import java.util.Objects;
  * {@code AgentProfileView} 会把它们连到控制台上({@code 不在这台机器上} /
  * {@code 在这台机器的座位表上} 是两句话, 不是一个 {@code null})。
  *
- * <h2>它不做恢复</h2>
- * 本类只装配一个<b>空</b>的她 —— 账本、计划表、活动日志都是新的。
- * 把历史装回去是 {@link RecoveryRuntime} 的事(§8.5.6), 而且它<b>必须在本类被调用之前
- * 完成读取</b>: 因为 {@code Life} 自己造计划表({@code this.plan = new PlanBoard()}),
- * 而"一版恢复出来的计划"今天<b>没有</b>装载入口 —— 见 {@code RecoveryRuntime} 的
- * 拒绝规则。把恢复放在装配之后做, 就等于承认"先装一个空白的她, 再把历史补上",
- * 而那正是 §8.6.3 第 7 步说"错了会毁掉数据"的那个顺序。
+ * <h2>它不做恢复, 但它<b>接受</b>恢复的结果</h2>
+ * 本类不读库 —— 它不 import 任何 {@code persistence/} 里的类型, 所以"她有什么历史"
+ * 这个问题在它这里没有答案。把历史读出来是 {@link RecoveryRuntime} 的事(§8.5.6)。
+ *
+ * <p>但那两件事的<b>先后是被强制的</b>, 不是靠调用方记得:
+ * 恢复出来的计划表与活动只能通过 {@link #assemble} 的参数进来, 而它们在构造器里
+ * 被装到部件上 —— 于是"先装一个空白的她, 再把历史补上"这条路<b>不存在</b>,
+ * 因为没有"补"这个动作。这正是 §8.6.3 第 7 步(恢复必须先于心跳)在代码形状上的落实:
+ * 那个顺序之所以"错了会毁掉数据", 是因为后补的历史会撞上一个已经在动的世界;
+ * 而这里连后补的入口都不提供。
+ *
+ * <p>两个 {@code restored*} 参数也可以都是 {@code null} —— 那是"库里没有她的历史",
+ * 与"她今天刚出生"是同一件事, 而它和"读失败了"不同: 后者由
+ * {@link RecoveryRuntime} 拒绝入座, 不允许被伪装成前者。
  */
 public final class HumanAssembly {
 
@@ -136,6 +145,39 @@ public final class HumanAssembly {
      */
     public static Parts assemble(String humanId, AgentLifecycle lifecycle,
                                  ActionFabric actionFabric, SimulationClock clock) {
+        return assemble(humanId, lifecycle, actionFabric, clock, null, null);
+    }
+
+    /**
+     * 带历史的她 —— <b>§8.5.6 第 ② 步的落点</b>。
+     *
+     * <h2>它<b>不</b>读库, 它只装</h2>
+     * 两个 {@code restored*} 参数是<b>别人读出来的</b>: 读库那一步
+     * ({@code PlanStore.latest} / {@code ActivityStore.runningActivity}) 归
+     * {@link RecoveryRuntime}, 本类只负责把它们装到部件上。
+     * 这条分工不是洁癖 —— 它让"谁读了历史"与"谁装了历史"各有一个名字,
+     * 而两件事混在一起时, "恢复跑了没有"就没有单一答案了。
+     *
+     * <h2>为什么这两个参数必须<b>一起</b>给</h2>
+     * 因为它们描述的是同一件事的两面: 库里有 {@code RUNNING} 的活动 ⟺ 那一版计划里
+     * 对应的项是 {@code ACTIVE}。只给其中一半会得到两种都不报错的坏状态:
+     *
+     * <pre>
+     *   只给计划 → 她以为自己在做那件事(项是 ACTIVE), 而 Life.current 是空的
+     *              → begin(...) 不再拒绝 → 同一段时间被做两次
+     *   只给活动 → Life.current 指向一件计划表上不存在的项
+     *              → 她做完时 concludeCurrent 找不到那一项
+     * </pre>
+     *
+     * <p>所以 {@link RecoveryRuntime} 一定是两个一起读、两个一起传 ——
+     * 而 a-1 那种"库里有一半"的处境由它当场拒绝入座, 不允许走到这里。
+     *
+     * @param restoredPlan     从库里读回来的那一版计划。{@code null} = 她没有历史
+     * @param restoredActivity 从库里读回来的、正在进行的那一件事。{@code null} = 她手头没事
+     */
+    public static Parts assemble(String humanId, AgentLifecycle lifecycle,
+                                 ActionFabric actionFabric, SimulationClock clock,
+                                 PlanRevision restoredPlan, Activity restoredActivity) {
         Objects.requireNonNull(humanId, "装配必须知道装的是谁 —— "
                 + "一个不知道归属的 Human 会让两个 agent 共用一条总线");
         Objects.requireNonNull(lifecycle, "装配必须知道她此刻的运行档 —— "
@@ -161,7 +203,10 @@ public final class HumanAssembly {
 
         // ④ 生活。它自己造计划表 —— 这是 requireOnePlanBoard 存在的理由, 不是缺陷:
         //    PlanEventPublisher 只接在**这一张**上(见 Life 构造器), 所以 Mind 必须拿同一张。
-        Life life = new Life(humanId, fabric, PlanningContext.HumanSnapshot::unknown);
+        //    两个 restored* 走构造参数而不是事后 load —— 装载必须发生在发布器挂上之前,
+        //    否则恢复本身会发出一串"她刚刚改了计划"的假事件(见 Life 那个构造器的说明)。
+        Life life = new Life(humanId, fabric, PlanningContext.HumanSnapshot::unknown,
+                restoredPlan, restoredActivity);
 
         // ⑤ 关系网 —— 空的。这不是占位, 是今天的真实状态: 见类注释第二段。
         RelationshipGraph relationships = RelationshipGraph.empty();

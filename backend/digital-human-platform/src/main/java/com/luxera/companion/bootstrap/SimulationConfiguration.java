@@ -525,18 +525,24 @@ public class SimulationConfiguration {
                                          AgentRegistry agents,
                                          RecoveryRuntime recoveryRuntime,
                                          SimulationProperties properties) {
-        // 恢复那一段现在是**真的**: 账本条数、替身数、拒绝入座数都来自刚才那一轮恢复。
+        // 恢复那一段现在是**真的**: 账本条数、替身数、计划项数、拒绝入座数都来自
+        // 刚才那一轮恢复 —— 四个数都是数出来的, 不是写上去的。
         //
-        // 仍然有两个数是写死的零, 而它们各自缺的东西不一样(见 RecoveryRuntime 那张表):
-        //   planItems   —— 必然与 refusedAgents 互补。有计划存量的 agent 会被拒绝入座,
-        //                  所以"装进来的计划项"永远是 0, 直到 Life 有了装载入口;
-        //   historyDays —— world_event 表还没有生产者, 而 World 没有 id,
-        //                  所以"世界历史覆盖了几天"这个问题今天没有被问过。
+        // 仍然有**一个**数是写死的零, 而它缺的东西与上面四个不同(见 RecoveryRuntime 那张表):
+        //   historyDays —— 它问的是"补了多少天的**世界**历史"(§8.5.6 ④),
+        //                  而 world_event 表还没有生产者、World 也没有 id,
+        //                  所以这个问题今天没有被问过。
         // 写成零而不是省略: 一个"少一段"的日志会让人以为那一段是最近才加的,
         // 而零会说"它现在确实是空的"。
+        //
+        // planItems 此前也是这样一个零, 而它已经变成了真的 —— 值得说清它当时为什么是零:
+        // 那时"库里有计划的 agent 会被拒绝入座", 所以 planItems 与 refusedAgents
+        // 是<b>互补</b>的两个数, 而"装进来的计划项"必然是 0。装载入口补上之后
+        // 这条互补关系消失了, 于是这一格必须跟着变成真的 —— 留一个写死的零在这里
+        // 会让"恢复装回了 0 项计划"与"恢复没有问过这件事"重新变成同一句话。
         RecoveryRuntime.Report r = recoveryRuntime.report();
         StartupSummary.Recovery recovery = new StartupSummary.Recovery(
-                r.ledgerEntries(), r.opaqueEntries(), 0, 0, r.refused());
+                r.ledgerEntries(), r.opaqueEntries(), r.planItems(), 0, r.refused());
 
         // 座位数与应当跑的人数并排报 —— 单看座位那个数分不出
         // "库里还没有人"与"有人而没被装进来", 而这两件事要做的事完全不同。

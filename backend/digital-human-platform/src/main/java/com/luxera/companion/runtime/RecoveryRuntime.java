@@ -3,6 +3,9 @@ package com.luxera.companion.runtime;
 import com.luxera.companion.boundary.action.ActionFabric;
 import com.luxera.companion.boundary.event.ContinuousEffectLedger;
 import com.luxera.companion.boundary.event.EventFabric;
+import com.luxera.companion.human.life.activity.Activity;
+import com.luxera.companion.human.life.plan.PlanLifecycle;
+import com.luxera.companion.human.life.plan.PlanRevision;
 import com.luxera.companion.persistence.store.ActivityStore;
 import com.luxera.companion.persistence.store.EffectLedgerStore;
 import com.luxera.companion.persistence.store.OpaqueEffect;
@@ -41,8 +44,10 @@ import java.util.Optional;
  *   </tr>
  *   <tr>
  *     <td>② Life ← 计划表 + 活动</td>
- *     <td><b>做不到 —— 于是拒绝入座</b></td>
- *     <td>{@code Life} 自己造 {@code PlanBoard} 且没有装载入口, 见下面的拒绝规则</td>
+ *     <td><b>做了</b></td>
+ *     <td>{@code Life} 的重载构造器收这两个东西, 而装载发生在发布器挂上之前 ——
+ *         所以恢复<b>不会</b>发出一串"她刚刚改了计划"的假事件。
+ *         见下面"为什么装载走构造参数"那一段</td>
  *   </tr>
  *   <tr>
  *     <td>③ Mind ← 记忆与关系网</td>
@@ -68,27 +73,50 @@ import java.util.Optional;
  *   </tr>
  * </table>
  *
- * <h2>拒绝规则: 读不回来的历史, 不许用一张空白表顶替</h2>
+ * <h2>装载走构造参数, 不走一个 load 方法 —— 这是本类最要紧的一处形状</h2>
+ * 恢复出来的一版计划与那一条进行中的活动, 是通过 {@code Life} 的<b>构造参数</b>
+ * 进去的, 而不是"装好一个空白的她, 再调一个方法把历史塞进去"。这个区别不是风格:
+ *
+ * <pre>
+ *   先装载, 后挂发布器  → 装载那一刻还没有观察者, 它不产生任何事件。这是一次恢复
+ *   先挂发布器, 后装载  → 那一次装载被当成**一次真实的计划变更**发出去。
+ *                        于是每次重启, 世界都会收到一遍她生前的全部
+ *                        plan.revision-created.v1 + plan.item-scheduled.v1,
+ *                        而行为分析会把它们算成"她刚刚做的决定"
+ * </pre>
+ *
+ * <p>第二种的后果不是"多了几条日志": 库里那一版计划与那些假事件之间<b>没有任何矛盾</b>
+ * 能让人发现这件事 —— 它们看起来完全正常, 而"她今天重排了几次"这个数从此是错的。
+ * 把装载放进构造器之后, 这个顺序由代码的书写顺序保证, 而不是由调用方的纪律保证;
+ * 而且"后补历史"这个动作<b>根本不存在</b>, 所以它不可能被用错时刻。
+ *
+ * <p>这与 §8.6.3 第 7 步(恢复必须先于心跳)是同一个道理的两个粒度: 世界那一层,
+ * 心跳不能先动; 她这一层, 发布器不能先挂。
+ *
+ * <h2>拒绝规则: 读回来的东西<b>互相矛盾</b>时, 不许挑一个信</h2>
  *
  * 这是本类里唯一一个<b>有主张</b>的决定, 而它来自 §8.5.6 的第一条硬约束
  * ("读不回来的行不许丢")。那条约束在原文里是针对账本的(用 {@code OpaqueEffect} 留位),
- * 而本类把它<b>提到了整份历史的粒度</b>上, 因为计划表那一侧的失效方式不一样:
+ * 而本类把它<b>提到了整份历史的粒度</b>上:
  *
  * <pre>
  *   账本读不回来一条  → 用替身占位, 数值还对, 只是解释丢了(OpaqueEffect)
- *   计划表读得回来却没有入口 → 她会被装成**一张空表**。库里那一版计划还在,
- *                        而"她今天打算做什么"这个问题里, 库和内存给的是两个答案
+ *   计划说她在做某事, 而活动表说她没有 → 挑一半装进去, 两种挑法都会制造假的过去
  * </pre>
  *
  * <p>第二种更坏, 因为替身至少承认自己是替身。所以遇到它时本类的选择是
- * <b>拒绝给这个 agent 一个座位</b>, 并打一条 WARN 说出三个数: 谁、为什么、
- * 以及补上它需要哪个入口。她不会被驱动, 于是也不会有任何一行数据被写坏。
+ * <b>拒绝给这个 agent 一个座位</b>, 并打一条 WARN 说清是<b>哪两行</b>对不上。
+ * 她不会被驱动, 于是也不会有任何一行数据被写坏。
  *
- * <p><b>今天这条规则不会响:</b> {@code PlanStore.appendRevision} 与
+ * <p><b>这条规则刚刚被缩小过一次</b>, 而那件事本身值得记下来: 它的第一版拒绝
+ * 两类人(库里有计划的、库里有进行中活动的), 理由是"{@code Life} 没有装载入口" ——
+ * 那是本仓自己的功能缺口, 而补上那个缺口之后这两条拒绝就该消失。
+ * 它们消失了, 而<b>留下的那一条拒绝的是另一种东西</b>: 不是"我装不了",
+ * 是"这两行对不上, 我不知道该信哪一行"。见 {@link #whyUnrebuildable}。
+ *
+ * <p><b>今天这条规则只在数据被写坏时才会响:</b> {@code PlanStore.appendRevision} 与
  * {@code ActivityStore.append} 都没有生产调用者(只有测试), 所以那两张表是空的。
- * 它不是为今天写的, 它是为<b>下一个把计划生产者接上的人</b>写的 ——
- * 那个人会在第一次启动时立刻看到这条 WARN, 而不是在几天后从"她怎么什么都不做"
- * 倒推回来。这正是 §8.5.8 的"先有读面"在装配层的用法。
+ * 它真正会响的场景是"写完计划表就崩了" —— 那正是"两次写入之间没有事务"的形状。
  *
  * <h2>为什么它可重复调用</h2>
  * {@link #recover()} 跳过已经在座位表上的人, 于是它的语义是
@@ -158,6 +186,7 @@ public final class RecoveryRuntime {
         int skipped = 0;
         long ledgerEntries = 0;
         long opaqueEntries = 0;
+        int planItems = 0;
         List<Refusal> refusals = new ArrayList<>();
 
         for (AgentProfileView view : runnable) {
@@ -178,16 +207,31 @@ public final class RecoveryRuntime {
                 continue;
             }
 
-            // ① 账本。restore 是宽容读 + 重放: 读不回来的行会以 OpaqueEffect 的形式
+            // ① Body ← 账本。restore 是宽容读 + 重放: 读不回来的行会以 OpaqueEffect 的形式
             //    留在结果里, 而不是被丢掉(§8.5.6 的第一条硬约束)。
-            ContinuousEffectLedger restored = ledgers.restore(humanId, now);
+            ContinuousEffectLedger restoredLedger = ledgers.restore(humanId, now);
+
+            // ② Life ← 计划表 + 活动。两个都读、两个都传 —— 见 HumanAssembly 那个重载
+            //    的说明: 只给其中一半不会报错, 只会让她"以为自己在做一件不存在的事"
+            //    或"计划表上有一项正在做而她不记得在做什么"。
+            PlanRevision restoredPlan = plans.latest(humanId).orElse(null);
+            Activity restoredActivity = activities.runningActivity(humanId).orElse(null);
 
             HumanAssembly.Parts parts = HumanAssembly.assemble(
-                    humanId, registry.lifecycleOf(humanId), actionFabric, clock);
+                    humanId, registry.lifecycleOf(humanId), actionFabric, clock,
+                    restoredPlan, restoredActivity);
 
-            Counted counted = refill(restored, parts.fabric(), now);
+            Counted counted = refill(restoredLedger, parts.fabric(), now);
             ledgerEntries += counted.entries();
             opaqueEntries += counted.opaque();
+
+            // 她这一版计划有几项 —— 这一格从"写死的零"变成了真的数。
+            // 注意这里数的是**项数**而不是"她今天有几件事要做": 那一版里可能有
+            // 已经做完的、被取消的、被推翻的项, 它们同样是"她带着的历史"。
+            // 理由与 refill 里那条"条数含已失效的"完全一致。
+            if (restoredPlan != null) {
+                planItems += restoredPlan.size();
+            }
 
             // 座位登记把两件事一起做完: 接进心跳, 并把她的总线接到世界上。
             // 顺序不能反 —— 先登记处后座位的话, 控制台会读到一个
@@ -197,7 +241,14 @@ public final class RecoveryRuntime {
             seated++;
         }
 
-        report = new Report(seated, skipped, refusals.size(), ledgerEntries, opaqueEntries);
+        // historyDays 仍然是 0, 而且它**不是**"还没接"。它问的是"补了多少天的
+        // **世界**历史"(§8.5.6 ④: 读 [lastSeenAt, now) 区间里的 world_event),
+        // 而那条路今天两端都没定下来(World 没有 id, WorldEventStore.append 没有生产者)。
+        // 拿恢复出来的计划表的 createdAt 去填这一格是一个**看起来很像**的替代品 ——
+        // 而那正是本类最不该做的事: 它会把"世界历史"这个词静默地换成"计划历史",
+        // 于是下一个读这一行日志的人会以为 ④ 已经做了。
+        report = new Report(seated, skipped, refusals.size(),
+                ledgerEntries, opaqueEntries, planItems);
         this.refusals = List.copyOf(refusals);
 
         if (runnable.isEmpty()) {
@@ -218,19 +269,67 @@ public final class RecoveryRuntime {
      *
      * <p>返回的是"为什么装不回去"而不是一个布尔 —— 因为这条路径上唯一的消费者是
      * 一条 WARN 与一个运维面板, 而"她被拒绝了"这句话本身没有可操作性;
-     * "她会被装成一张空表, 因为 Life 没有装载入口"才有。
+     * "她会带着半份历史继续活, 因为 X"才有。
+     *
+     * <h2>这条规则刚被缩小过一次, 而它剩下的每一条都<b>不是</b>"功能还没做"</h2>
+     * 第一版在这里拒绝两类人 —— 凡库里有一版计划表的、凡有一条进行中的活动的。
+     * 那时它拒绝的理由是"{@code Life} 没有装载入口", 也就是<b>本仓自己的功能缺口</b>。
+     * 那个缺口补上之后({@code Life} 的重载构造器), 这两条拒绝就都该消失了 ——
+     * <b>而它们没有全部消失</b>: 留下来的这一条拒绝的是另一种东西。
+     *
+     * <pre>
+     *   过去的拒绝: "这个我装不了"        → 补一个入口就没了(已补)
+     *   现在的拒绝: "这两行对不上, 我不知道该信哪一行"  → 补入口解决不了
+     * </pre>
+     *
+     * <h2>剩下这一条: 半份历史</h2>
+     * 计划表那一版里有一项 {@code ACTIVE}(她正在做), 而活动表里没有那一条 {@code RUNNING}
+     * 的行 —— 或者反过来。两种都是"库里那两行互相矛盾", 而它们各自都无法被单独装进去:
+     *
+     * <pre>
+     *   只装计划 → 她以为自己在做那件事, 而 Life.current 是空的
+     *              → begin(...) 不再拒绝 → 同一段时间被做两次
+     *   只装活动 → Life.current 指向一件计划表上不存在的项
+     *              → 她做完时 concludeCurrent 找不到那一项
+     * </pre>
+     *
+     * <p>而<b>装哪一半都是猜</b>: 猜错的代价是一段时间被做两次(或被丢掉),
+     * 而这两种错在事后都无法从数据上看出来。所以这里的选择还是拒绝 ——
+     * 与第一版同一个态度(不许用一张空白表顶替), 只是理由从"我做不到"
+     * 换成了"这行数据不自洽"。
+     *
+     * <h2>这一条今天会响的情况</h2>
+     * 只有当有人<b>手工改库</b>、或者 {@code ActivityStore.conclude} 与
+     * {@code PlanStore.appendRevision} 的写入顺序被打断(写完计划就崩了)时才出现。
+     * 后一种是真实的 —— 它正是"两次写入之间没有事务"的形状 ——
+     * 而它必须被看见, 不是被猜过去。
      */
     private Optional<String> whyUnrebuildable(String humanId) {
-        if (plans.latest(humanId).isPresent()) {
-            return Optional.of("库里有一版计划表, 而 Life 没有'装载一版计划'的入口"
-                    + "(它自己 new PlanBoard, 没有 loader) —— 装进来会是一张**空表**, "
-                    + "于是'她今天打算做什么'在库里与内存里是两个答案。"
-                    + "补它需要在 Life 上开一个装载入口(并让 PlanEventPublisher 用**替换**"
-                    + "而不是**追加**的方式接上, 否则恢复本身会发出一串假的计划变更事件)");
+        Optional<PlanRevision> plan = plans.latest(humanId);
+        Optional<Activity> running = activities.runningActivity(humanId);
+
+        // 按 lifecycle 判, 而不是 activeAt(someInstant): 后者问的是"某个时刻她归哪一项",
+        // 而这里问的是"有没有一项正处于 ACTIVE 这个状态" —— 后者不需要一个时刻,
+        // 也不该为了问它去发明一个(Instant.MAX 会在窗口算术里溢出)。
+        boolean planSaysSheIsDoingSomething = plan
+                .map(revision -> revision.items().stream()
+                        .anyMatch(item -> item.lifecycle() == PlanLifecycle.ACTIVE))
+                .orElse(false);
+        boolean activitySaysSheIs = running.isPresent();
+
+        if (planSaysSheIsDoingSomething && !activitySaysSheIs) {
+            return Optional.of("库里那一版计划里有项是**正在做**, 而活动表里没有对应的"
+                    + "进行中活动 —— 两行对不上。装计划那一半她会以为自己在做那件事"
+                    + "(于是同一段时间会被做两次), 装活动那一半什么也装不上。"
+                    + "这不是'缺一个入口', 是**数据不自洽**: 请先确认哪一行是真的"
+                    + "(通常是一次写库被打断留下的), 而不是让恢复去猜");
         }
-        if (activities.runningActivity(humanId).isPresent()) {
-            return Optional.of("库里有一条正在进行的活动, 而 Life 没有'装载一条进行中的活动'的入口"
-                    + " —— 装进来她会以为自己此刻什么都没在做, 于是同一段时间会被做两次");
+        if (activitySaysSheIs && !planSaysSheIsDoingSomething) {
+            return Optional.of("库里有一条**进行中**的活动, 而那一版计划里没有任何一项是"
+                    + "正在做 —— 两行对不上。装活动那一半会让她的 current 指向一件"
+                    + "计划表上不存在的项(做完时 concludeCurrent 找不到它), "
+                    + "装计划那一半等于把这条活动丢掉。这不是'缺一个入口', "
+                    + "是**数据不自洽**: 请先确认哪一行是真的, 而不是让恢复去猜");
         }
         return Optional.empty();
     }
@@ -329,14 +428,32 @@ public final class RecoveryRuntime {
         return describe();
     }
 
-    /** 一轮恢复的账 —— 五个数, 各回答一个运维问题。 */
-    public record Report(int seated, int skipped, int refused, long ledgerEntries, long opaqueEntries) {
+    /**
+     * 一轮恢复的账 —— 六个数, 各回答一个运维问题。
+     *
+     * @param seated        这一轮装进来几个她。与 {@code skipped} 分开: 那个是"我上一轮
+     *                      已经装过了", 而它不该被算成一次成功
+     * @param skipped       花名册上该跑、而已经在座位上的
+     * @param refused       读得回来却装不回去的 —— 见 {@link #whyUnrebuildable}
+     * @param ledgerEntries 补回来的账本条数, <b>含已失效的</b>: 这一格问的是
+     *                      "她带着多少历史", 不是"此刻有几条影响在生效"
+     * @param opaqueEntries 其中只能以替身重建的条数。它<b>不在</b>{@code ledgerEntries} 之外
+     *                      —— 是它的子集
+     * @param planItems     补回来的计划表里一共有几项, 同样<b>含</b>完结的项。
+     *                      它是所有人之和(三个她各十项就是 30), 不是"她有十项"。
+     *                      这一格从"写死的零"变成了真的数 —— 它此前是零, 因为
+     *                      计划表根本没有装载入口, 于是"补回来几项"这个问题没被问过
+     */
+    public record Report(int seated, int skipped, int refused,
+                         long ledgerEntries, long opaqueEntries, int planItems) {
 
         public Report {
-            if (seated < 0 || skipped < 0 || refused < 0 || ledgerEntries < 0 || opaqueEntries < 0) {
+            if (seated < 0 || skipped < 0 || refused < 0
+                    || ledgerEntries < 0 || opaqueEntries < 0 || planItems < 0) {
                 throw new IllegalArgumentException("恢复的计数不能是负数: 入座 " + seated
                         + ", 已坐 " + skipped + ", 拒绝 " + refused
-                        + ", 账本 " + ledgerEntries + ", 替身 " + opaqueEntries);
+                        + ", 账本 " + ledgerEntries + ", 替身 " + opaqueEntries
+                        + ", 计划 " + planItems);
             }
             if (opaqueEntries > ledgerEntries) {
                 throw new IllegalArgumentException("替身数(" + opaqueEntries
@@ -355,7 +472,8 @@ public final class RecoveryRuntime {
 
         public String describe() {
             return "入座 " + seated + " 个, 已在座 " + skipped + " 个, 拒绝 " + refused + " 个, "
-                    + "账本 " + ledgerEntries + " 条(其中 " + opaqueEntries + " 条替身)";
+                    + "账本 " + ledgerEntries + " 条(其中 " + opaqueEntries + " 条替身), "
+                    + "计划 " + planItems + " 项";
         }
     }
 

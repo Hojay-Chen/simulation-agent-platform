@@ -111,6 +111,45 @@ public final class Life {
      */
     public Life(String humanId, EventFabric fabric,
                 Supplier<PlanningContext.HumanSnapshot> snapshot) {
+        this(humanId, fabric, snapshot, null, null);
+    }
+
+    /**
+     * 带历史的她 —— <b>V2.2 §8.5.6 第 ② 步的落点</b>。
+     *
+     * <h2>为什么"恢复出来的一版计划"走的是构造参数, 而不是一个 load 方法</h2>
+     * 因为一个 {@code loadPlan(revision)} 方法会被用在<b>错误的时刻</b>:
+     * 它必须在发布器挂上之前被调用, 而"记得按那个顺序"是一件只能写在别人脑子里的事。
+     * 走构造参数之后这件事变成结构性的 —— 装载与挂载在同一个方法体里,
+     * 顺序由代码的书写顺序保证, 而不是由调用方的纪律保证:
+     *
+     * <pre>{@code
+     *   this.plan = new PlanBoard(restoredPlan);          // ① 先装载 —— 此刻还没有观察者
+     *   if (fabric != null) {
+     *       new PlanEventPublisher(fabric).attachTo(plan); // ② 后挂载 —— 从此每一次变更都发事件
+     *   }
+     * }</pre>
+     *
+     * <p>顺序反了会怎样: {@code PlanBoard} 的构造器在装入 {@code initial} 时
+     * <b>不通知观察者</b>(见那里的说明), 而如果发布器先挂上、装载走一个"设置当前版本"
+     * 的方法, 那一次装载就会被当成一次真实的计划变更发出去。于是每次重启,
+     * 世界都会收到一遍她生前的全部 {@code plan.revision-created.v1} 与
+     * {@code plan.item-scheduled.v1} —— 行为分析会把它们算成她刚刚做的决定,
+     * 而它们看起来完全正常。
+     *
+     * <h2>为什么活动也走构造参数</h2>
+     * 同一件事的另一半: 库里若有一行 {@code RUNNING} 的活动, 而 {@code Life} 不知道它,
+     * 她会以为自己手头没事 —— 于是 {@link #begin} 不再拒绝, 同一段时间会被做两次,
+     * 而"她今天做了两件事"里有一件是假的。两个参数<b>必须一起来</b>:
+     * 一版计划里那一项是 {@code ACTIVE}, 而它对应的活动就是这一条。
+     *
+     * @param restoredPlan     从库里恢复回来的一版计划。{@code null} 表示她没有历史 ——
+     *                         与 {@code new PlanBoard()} 的"她还没有任何计划"是同一件事
+     * @param restoredActivity 恢复回来的、正在进行的那一件事。{@code null} 表示她手头没事
+     */
+    public Life(String humanId, EventFabric fabric,
+                Supplier<PlanningContext.HumanSnapshot> snapshot,
+                PlanRevision restoredPlan, Activity restoredActivity) {
         if (humanId == null || humanId.isBlank()) {
             throw new IllegalArgumentException(
                     "Life 必须知道它是谁的 —— 计划表与活动日志都是 per-human 的状态, "
@@ -120,13 +159,20 @@ public final class Life {
         this.fabric = fabric;
         this.snapshot = Objects.requireNonNull(snapshot,
                 "生活必须能看到身体状态 —— 规划与重排都要靠它");
-        this.plan = new PlanBoard();
+
+        // ① 先装载。PlanBoard 的构造器不通知观察者, 所以这一刻发生的事不会变成事件。
+        this.plan = new PlanBoard(restoredPlan);
+
+        // ② 恢复回来的那一件事。它不进 concluded —— 它还没结束, 而 concluded 是
+        //    "已结束"的日志。它结束时会走 concludeCurrent, 那就正常进日志了。
+        this.current = restoredActivity;
+
         this.scheduler = new DefaultPlanScheduler(plan);
         this.validator = new PlanValidator(fabric);
 
         if (fabric != null) {
-            // 装配发布器: 此后每一次计划表变更都会变成世界事件。
-            // 它是 PlanBoard 与 EventFabric 之间唯一的桥 —— 计划表本身不认识事件总线
+            // ③ 后挂载。此后每一次计划表变更都会变成世界事件。
+            //    它是 PlanBoard 与 EventFabric 之间唯一的桥 —— 计划表本身不认识事件总线
             new PlanEventPublisher(fabric).attachTo(plan);
         }
     }
