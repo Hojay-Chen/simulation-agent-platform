@@ -57,9 +57,38 @@ import java.util.UUID;
  * <p>因此这一层的纪律是: <b>{@code application_key} 是身份, 三元组是尽力而为的补充</b>。
  * 读的时候先按 key 找到类（{@code DeviceRegistry} 那一侧）, 再试着用三元组反序列化状态;
  * 认不出类型时状态以 {@code Map} 形式交回, 而不是丢成 {@code null}。
+ *
+ * <h2>表名为什么是 {@code device_application} 而不是 {@code application}</h2>
+ *
+ * 因为两个仓共用同一个 {@code companion} 库, 而<b>仓 1(chat-platform) 已经占用了
+ * {@code application} 这个名字</b> —— 那是它的应用平台注册表
+ * ({@code com.luxera.companion.application.domain.ApplicationRecord},
+ * 列为 id/category/developer_id/latest_version/name/status/state_json),
+ * 与本表没有一列重合。
+ *
+ * <p>撞名的后果不是"两边各写各的", 而是<b>这张表永远建不出来</b>。{@code ddl-auto: update}
+ * 每次都试着补列, 而 PostgreSQL 拒绝往一张已有数据的表上加 NOT NULL 列:
+ *
+ * <pre>
+ *   alter table if exists application add column application_key varchar(64) not null
+ *   → ERROR: column "application_key" of relation "application" contains null values
+ * </pre>
+ *
+ * 于是每一次启动都刷一遍这段报错, 两条索引 ({@code idx_application_device_key} /
+ * {@code idx_application_type}) 也随之建不出来 —— 索引建在那些从来没被加上的列上。
+ * 而这张表的列至今<b>一个都不存在</b>, 所以它到现在也从未写进过一行: 改成新表名
+ * 不需要任何数据迁移。
+ *
+ * <p>更麻烦的是它<b>不会自愈</b>: 只要两仓共库、名字还撞着, 这一列就永远加不上。
+ * 现在的症状只是启动日志噪声(与一个用不了的仓储类 —— 它还没有运行期调用方),
+ * 但等世界模型那边接上第一个消费者, 报出来的会是
+ * {@code column "device_id" does not exist}。那不像是"表名撞了", 像是"实体写错了"。
+ *
+ * <p>本仓的表名约定是单数 {@code <域>_<物>}（{@code action_command} / {@code person_object} /
+ * {@code phone_notification}）, 所以 {@code device_application} 是与它一致的那个名字。
  */
 @Entity
-@Table(name = "application", indexes = {
+@Table(name = "device_application", indexes = {
         // ① "这台设备装了哪些应用" —— 设备装配与通知路由的第一个查询。
         //    它同时是"按 key 找应用"的索引: (device_id, application_key) 上
         //    设备内的 key 唯一, 所以这条索引与一条唯一约束的代价相同、收益相同。
