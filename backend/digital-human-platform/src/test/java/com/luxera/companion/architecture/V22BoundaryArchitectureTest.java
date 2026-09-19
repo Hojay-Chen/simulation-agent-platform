@@ -553,6 +553,133 @@ class V22BoundaryArchitectureTest {
                         + String.join("\n  ", missing));
     }
 
+    // ─────────── 四之二、登记清单不许腐烂 (§8.6.6 的第二条守卫) ───────────
+
+    /**
+     * 上一节那条守卫管"这个类型有没有被<b>文档化</b>"; 这一节管"这个类型运行时<b>存不存在</b>"。
+     *
+     * <h2>为什么要第二条</h2>
+     * 目录守卫扫的是源码文本里的 {@code @DomainType} 与 {@code EventTypeId.of(...)},
+     * 它能证明"目录没漏"。但一个类型可以既有目录、又有注解、<b>却没被注册</b> ——
+     * 三条都成立, 而它写进数据库之后读不回来。
+     *
+     * <p>这两条守卫会同时为真的情况是"文档写了、代码没有", 而那正是 §8.6.2 里
+     * {@code Cancellation} 事故之前的状态: 那个类已经删了, 名字还留在目录里,
+     * 而<b>旧构建产物里还有它的 {@code .class}</b>, 于是 classpath 扫描仍然把它注册了回来。
+     */
+    private static final List<String> TYPE_REGISTRY_CORE_PACKAGES = List.of(
+            "com.luxera.companion.boundary",
+            "com.luxera.companion.world",
+            "com.luxera.companion.human",
+            "com.luxera.companion.registry",
+            "com.luxera.companion.persistence");
+
+    /**
+     * <b>核心包里每一个带 {@code @DomainType} 的类, 都必须能从装配层的登记清单里拿到名字。</b>
+     *
+     * <h2>为什么是"跑一遍装配层", 而不是"读一遍清单文件"</h2>
+     * 因为要守的东西本来就不是那份清单, 而是<b>它跑出来的结果</b>。清单可以写得很好看,
+     * 而其中一行的 {@code registerTypes} 里少写了一行 {@code registry.register(X.class)} ——
+     * 那件事只有真的跑一遍才知道。
+     *
+     * <p>所以这里的做法是: ArchUnit 从<b>字节码</b>里收集候选(所以注释里提到
+     * {@code @DomainType} 不会误报), 然后调 {@link DomainTypeAssembly#assemble()}
+     * 造一个真的注册表, 再用 {@code DomainTypeRegistry.unregistered(...)} 问它
+     * "这些类里有哪些你不认识"。
+     *
+     * <h2>它红了该怎么读</h2>
+     * <ul>
+     *   <li>类名在源码里找得到 → 有人加了新类型没登记。改
+     *       {@code DomainTypeAssembly} 的清单, 加进它所属的那个生产者;</li>
+     *   <li>类名在源码里<b>找不到</b> → 那是构建产物里的旧 {@code .class}
+     *       (删掉的文件留下的)。这正是 {@code Cancellation} 事故的现场:
+     *       {@code rm -rf build/classes/java/main build/tmp/compileJava} 后重编。
+     *       <b>这一条红是对的</b> —— 那个类此刻确实在注册表里, 确实会被读出来,
+     *       而源码里已经没有人认领它。</li>
+     * </ul>
+     */
+    @Test
+    void everyCoreDomainTypeIsRegisteredByTheAssembly() {
+        List<Class<?>> candidates = new ArrayList<>();
+        for (JavaClass c : classes) {
+            if (!inCorePackage(c) || !c.isAnnotatedWith(com.luxera.companion.registry.DomainType.class)) {
+                continue;
+            }
+            try {
+                candidates.add(Class.forName(c.getName(), false,
+                        V22BoundaryArchitectureTest.class.getClassLoader()));
+            } catch (ClassNotFoundException e) {
+                throw new IllegalStateException("ArchUnit 看见了一个加载不回来的类: " + c.getName(), e);
+            }
+        }
+
+        // 候选集本身不能是空的 —— 一个零候选的守卫会以"零个未登记"的姿态永远变绿。
+        // 这正是 §8.6.2 那类"规则是对的、但它看的范围是空的"的失效。
+        assertTrue(candidates.size() >= 30,
+                "只收集到 " + candidates.size() + " 个带 @DomainType 的类 —— 这个数太少, "
+                        + "多半是包名列表或编译产物出了问题, 这条守卫现在什么也没检查");
+
+        var registry = com.luxera.companion.bootstrap.DomainTypeAssembly.assemble();
+        List<Class<?>> missing = registry.unregistered(candidates);
+
+        assertTrue(missing.isEmpty(),
+                "有 " + missing.size() + " 个 @DomainType 类没有被登记 —— 它们写进数据库之后"
+                        + "读回来会是一条 _untyped 替身(没有字段的空壳), 而这个故障只在重启后才出现。"
+                        + "请把它们加进 DomainTypeAssembly 的清单里对应生产者的 registerTypes:\n  "
+                        + missing.stream().map(Class::getName).collect(java.util.stream.Collectors.joining("\n  "))
+                        + "\n\n当前登记清单(" + com.luxera.companion.bootstrap.DomainTypeAssembly.producerCount()
+                        + " 个生产者):\n  "
+                        + String.join("\n  ",
+                        com.luxera.companion.bootstrap.DomainTypeAssembly.producerLabels()));
+
+        // 注册表里也不能有"两个类抢一个名字"。先注册的赢 —— 于是后一个的数据
+        // 会被读成前一个的类, 不报错。这条与漏登记同属"重启后才暴露"那一族。
+        assertTrue(registry.conflicts().isEmpty(),
+                "类型名冲突(先注册的赢, 后一个的数据会被静默读成前一个的类): " + registry.conflicts());
+
+        // 顺带钉住"装配层真的登记了这么多": 候选全在其中, 而注册表只可能更大
+        // (含非核心包与三方类型)。若两者相等且都很大, 那也没问题 —— 不额外断言。
+        assertTrue(registry.size() >= candidates.size(),
+                "装配层登记了 " + registry.size() + " 个类型, 却连核心包的 " + candidates.size()
+                        + " 个都盖不住 —— 这两者的大小关系本身就说明有东西没进去");
+    }
+
+    /**
+     * 上面那条守卫<b>真的会红</b>吗 —— 用一个明知没登记的类试它一次。
+     *
+     * <p>本文件里每一条守卫都配了这样一个反证(见
+     * {@link #theClockRuleWouldActuallyCatchAViolation()} 与
+     * {@link #theHumanInternalReadRuleWouldActuallyCatchAViolation()})。
+     * 理由是同一个: 一条永远绿的守卫与一条不存在的守卫在输出上完全一样,
+     * 而前者更坏 —— 它让人以为有人守着。
+     */
+    @Test
+    void theRegistrationGuardWouldActuallyCatchAViolation() {
+        var registry = com.luxera.companion.bootstrap.DomainTypeAssembly.assemble();
+
+        List<Class<?>> caught = registry.unregistered(List.of(NeverRegisteredFixture.class));
+
+        assertEquals(List.of(NeverRegisteredFixture.class), caught,
+                "一个 @DomainType 但从未被装配层登记过的类, 必须被这条守卫抓出来 —— "
+                        + "抓不出来就说明 unregistered(...) 的语义变了, 上面那条守卫也就成了摆设");
+    }
+
+    /** 反证用的假类型: 它有注解、有名字, 而装配层不认识它。 */
+    @com.luxera.companion.registry.DomainType(
+            value = "guard-registration.fixture", description = "守卫反证用的假类型, 永远不会被登记")
+    static final class NeverRegisteredFixture {
+    }
+
+    private static boolean inCorePackage(JavaClass c) {
+        String pkg = c.getPackageName();
+        for (String core : TYPE_REGISTRY_CORE_PACKAGES) {
+            if (pkg.equals(core) || pkg.startsWith(core + ".")) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     // ─────────────── 五、她的内部只给执行体与她自己看 ───────────────
 
     /** 唯一一个被允许从 {@code human/} 外面读她内部的类。 */
