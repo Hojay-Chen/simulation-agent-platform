@@ -16,8 +16,12 @@ import java.util.Map;
 import java.util.stream.Collectors;
 
 /**
- * 诊断端点(只读): 观察运行时内部 —— Agent 痕迹 / 排程动作 / 待复查消息 / 世界事件 / 已注册 Agent。
+ * 诊断端点(只读): 观察 V11/V12 运行时内部 —— Agent 痕迹 / 排程动作 / 待复查消息 / 世界事件 / V11 开关状态。
  * 用于验证与调试, 不影响主流程。
+ *
+ * <p>这里的 {@code /v5/**} 前缀是 V11 那一代的路径, {@code /agents} 读的是
+ * {@link CognitiveAgentRegistry}。V2.2 的读面在 {@code /api/agents} 一族, 由
+ * {@code AgentRegistry} 供数(那个装的是数字人, 不是处理器)—— 两代各说各的, 不共用前缀。
  */
 @RestController
 @RequestMapping("/api/companions/{companionId}/v5")
@@ -29,7 +33,7 @@ public class DiagnosticController {
     private final ScheduledActionService scheduledActionService;
     private final PendingMessageService pendingMessageService;
     private final WorldEventLogService worldEventLogService;
-    private final AgentRegistry agentRegistry;
+    private final CognitiveAgentRegistry cognitiveAgents;
     private final com.luxera.companion.llm.LlmCallRepository llmCallRepository;
     private final com.luxera.companion.cognitive.CognitiveSessionRepository cognitiveSessionRepository;
     private final com.luxera.companion.plan.PlanRepository planRepository;
@@ -44,7 +48,8 @@ public class DiagnosticController {
     public DiagnosticController(CurrentUser currentUser, CompanionService companionService,
                                   AgentTraceService traceService, ScheduledActionService scheduledActionService,
                                   PendingMessageService pendingMessageService,
-                                  WorldEventLogService worldEventLogService, AgentRegistry agentRegistry,
+                                  WorldEventLogService worldEventLogService,
+                                  CognitiveAgentRegistry cognitiveAgents,
                                   com.luxera.companion.llm.LlmCallRepository llmCallRepository,
                                   com.luxera.companion.cognitive.CognitiveSessionRepository cognitiveSessionRepository,
                                   com.luxera.companion.plan.PlanRepository planRepository,
@@ -61,7 +66,7 @@ public class DiagnosticController {
         this.scheduledActionService = scheduledActionService;
         this.pendingMessageService = pendingMessageService;
         this.worldEventLogService = worldEventLogService;
-        this.agentRegistry = agentRegistry;
+        this.cognitiveAgents = cognitiveAgents;
         this.llmCallRepository = llmCallRepository;
         this.cognitiveSessionRepository = cognitiveSessionRepository;
         this.planRepository = planRepository;
@@ -78,11 +83,12 @@ public class DiagnosticController {
         companionService.requireOwned(userId, companionId);
     }
 
+    /** V11 认知链上装了哪几个处理器 —— 顶层运维页那一块读的就是它。 */
     @GetMapping("/agents")
     public Map<String, Object> agents(@PathVariable String companionId) {
         String userId = currentUser.requireUserId();
         requireOwned(userId, companionId);
-        return Map.of("registered", agentRegistry.all().keySet().stream().sorted().toList());
+        return Map.of("registered", cognitiveAgents.all().keySet().stream().sorted().toList());
     }
 
     @GetMapping("/traces")

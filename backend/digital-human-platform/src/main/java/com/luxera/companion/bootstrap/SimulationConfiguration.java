@@ -4,8 +4,11 @@ import com.luxera.companion.boundary.event.ContinuousEffectLedger;
 import com.luxera.companion.persistence.DomainPayloadCodec;
 import com.luxera.companion.persistence.repository.ActionCommandRecordRepository;
 import com.luxera.companion.persistence.repository.ActivityRecordRepository;
+import com.luxera.companion.persistence.repository.AgentOwnershipRecordRepository;
 import com.luxera.companion.persistence.repository.ContinuousEffectRecordRepository;
+import com.luxera.companion.persistence.repository.ConversationAccountBindingRecordRepository;
 import com.luxera.companion.persistence.repository.DeviceApplicationRecordRepository;
+import com.luxera.companion.persistence.repository.HumanRecordRepository;
 import com.luxera.companion.persistence.repository.PlanConstraintRecordRepository;
 import com.luxera.companion.persistence.repository.PlanItemRecordRepository;
 import com.luxera.companion.persistence.repository.PlanRevisionRecordRepository;
@@ -22,7 +25,10 @@ import com.luxera.companion.persistence.store.StimulusReplayStore;
 import com.luxera.companion.persistence.store.WorldEventStore;
 import com.luxera.companion.persistence.store.WorldObjectStore;
 import com.luxera.companion.registry.DomainTypeRegistry;
+import com.luxera.companion.runtime.AgentProfileProjector;
+import com.luxera.companion.runtime.AgentRegistry;
 import com.luxera.companion.runtime.EnvironmentRefreshJob;
+import com.luxera.companion.runtime.LiveHumanSource;
 import com.luxera.companion.runtime.SimulationClock;
 import com.luxera.companion.runtime.WorldRuntime;
 import com.luxera.companion.world.World;
@@ -75,13 +81,22 @@ import java.util.List;
  * 在日志里长得一模一样。
  *
  * <h2>这个类还<b>没有</b>做什么(以及为什么现在不做)</h2>
- * §8.6.3 的第 5/6/7 步(每个 Human 的聚合根、{@code HumanActor} 与座位表、恢复)依赖一份
- * <b>"这个世界里有哪些人、各自是谁"</b>的来源 —— 那是 {@code agent_ownership} 那一层的活
- * (§3.6.8), 它还没落地。这里刻意不造一个假的来源把它填上: 一个"看起来装了人"的装配层
- * 会让人以为她已经活着, 而她的座位上其实一个人都没有。
  *
- * <p>所以当前 {@link StartupSummary} 会诚实地打印 {@code 0 个 Human}。那不是故障,
- * 那是一个状态 —— 而它是被<b>打印出来</b>的状态, 不是需要人去猜的状态。
+ * §8.6.3 的第 5/6 步 —— <b>把应当跑的 agent 物化成 {@code Human} 聚合, 装进座位表</b>
+ * —— 依赖一份"这个世界里有哪些人"的来源。那份来源本身已经落地了
+ * ({@link AgentRegistry}, §3.6.8/§8.5.7), 所以今天这个类<b>知道</b>库里有哪些人、
+ * 谁应当跑; 缺的是把那个名单变成内存里的她。
+ *
+ * <p>这里刻意<b>不</b>先物化几个充数: 一个"看起来装了人"的装配层会让人以为她已经活着,
+ * 而她的座位上其实一个人都没有。第 7 步(恢复)同理会把历史读回来 ——
+ * 在一个还没装上人的世界上跑恢复, 恢复出来的是零条, 而那个零会与
+ * "她确实没有历史"印成同一行。
+ *
+ * <p>所以当前 {@link StartupSummary} 打印的那一行里有两个数会同时出现:
+ * {@code 0 个 Human} 与 {@code 在册 N 个 agent(应当跑 M 个)}。它们一起才说明问题 ——
+ * 光看前面那个 0, 分不出"库里还没有人"与"有人而没被装进来"。
+ * 那不是故障, 那是一个状态 —— 而它是被<b>打印出来</b>的状态,
+ * 不是需要人去猜的状态(见 {@link StartupSummary#rosterWarning()})。
  */
 @Slf4j
 @Configuration
@@ -226,6 +241,54 @@ public class SimulationConfiguration {
         return clock;
     }
 
+    // ─────────────── 第 5/6 步的来源: 花名册 ───────────────
+
+    /**
+     * 把归属行、身份行、聊天账号绑定拼成一份档案 —— <b>不落库</b>(§3.6.7)。
+     *
+     * <h2>为什么 {@code live} 现在传的是 {@link LiveHumanSource#NONE}</h2>
+     * 因为那是此刻的<b>事实</b>, 而不是一个待补的空实现: 在下面两步把第一批
+     * {@code Human} 装进座位表之前, 对每一个 {@code humanId} 的诚实回答都是
+     * "她不在这台机器上"。它由此出现在档案的 {@code materialized() == false} 上,
+     * 而不是伪装成"她的身体各项是 0"。
+     *
+     * <p>第 5/6 步落地时, 换成实现的地方<b>就在这个类里</b> —— 因为活着的那些
+     * {@code Human} 的引用本来就归装配层持有({@code HumanActor} 刻意不暴露它持有的
+     * 那一个, 见 {@code LiveHumanSource} 的类注释)。所以这里<b>不</b>用
+     * {@code ObjectProvider} 去问容器要一个: 那会让读者以为外面已经有一个生产实现
+     * 可以盖过它, 而那是假的。{@code sinkOrDefault} 用 {@code ObjectProvider} 是因为
+     * 环境数据源真有一个可能来自三方的实现(§6), 这里没有。
+     */
+    @Bean
+    public AgentProfileProjector agentProfileProjector(ConversationAccountBindingRecordRepository bindings) {
+        return new AgentProfileProjector(bindings, LiveHumanSource.NONE);
+    }
+
+    /**
+     * 花名册 —— "平台上有哪些 agent、它们归谁、现在跑不跑"。
+     *
+     * <h2>为什么它是这个类里的一个 bean, 而它其实属于平台而不属于仿真</h2>
+     * §8.5.7 说得很清楚: 本类的读者是<b>平台</b>(控制台、运维面、{@code /api/**}),
+     * 不是她 —— 心跳只从它读一个 {@code AgentLifecycle}。所以它最终应当是一个
+     * <b>无条件</b>的 bean, 好让控制台在 {@code companion.sim.enabled=false}
+     * (今天就是缺省值)的配置下也能列人。
+     *
+     * <p>此刻它留在这个类里, 是因为它今天的唯一读者是同一行启动日志。把它挪出去
+     * 会顺带决定"控制台在没有仿真时读到的是什么", 而那是一个还没做的决定 ——
+     * 现在挪, 等于用一次重排假装那个决定已经做了。挪出去时只多一个
+     * {@code @Configuration} 类, 本类这一行删掉即可。
+     *
+     * <p>它不是有状态的领域对象, 所以做单例是对的: 三个 {@code final} 的仓库引用,
+     * 没有可变字段。这与上面那批 store 同一条理由, 与 {@code World}/{@code Human}
+     * 相反。
+     */
+    @Bean
+    public AgentRegistry agentRegistry(AgentOwnershipRecordRepository ownership,
+                                       HumanRecordRepository humans,
+                                       AgentProfileProjector projector) {
+        return new AgentRegistry(ownership, humans, projector);
+    }
+
     // ───────────────────── 第 5 步: 世界 ─────────────────────
 
     /**
@@ -340,27 +403,31 @@ public class SimulationConfiguration {
     public StartupSummary startupSummary(DomainTypeRegistry registry,
                                          World world,
                                          WorldRuntime runtime,
+                                         AgentRegistry agents,
                                          SimulationProperties properties) {
         // 恢复那一段现在是零 —— 因为恢复本身(§8.5.6)还没落地。写零而不是省略,
         // 是为了让这一行的形状<b>今天就是对的</b>: 一个"少一段"的日志会让人以为
         // 那一段是最近才加的, 而零会说"它现在确实是空的"。
         StartupSummary.Recovery recovery = new StartupSummary.Recovery(0, 0, 0, 0);
+
+        // 座位数与应当跑的人数并排报 —— 单看座位那个数分不出
+        // "库里还没有人"与"有人而没被装进来", 而这两件事要做的事完全不同。
+        StartupSummary.Roster roster = new StartupSummary.Roster(
+                agents.total(), agents.runnable().size());
+
         StartupSummary summary = new StartupSummary(
                 registry.size(),
                 registry.namespaces().size(),
                 registry.conflicts(),
                 1,
                 runtime.seatCount(),
+                roster,
                 recovery,
                 properties.getTickMs());
 
         log.info(summary.describe());
         summary.conflictWarning().ifPresent(log::warn);
-        if (!summary.hasHumans()) {
-            log.warn("[Sim] 场景是空的: 一个 Human 都没有。心跳会照常跑, 而她的一天不存在 —— "
-                    + "这不是故障, 是「人还没被装配进来」(见 SimulationConfiguration 的类注释)。"
-                    + "它必须说出来, 因为一个空转的心跳与一个正常的心跳在日志之外没有区别");
-        }
+        summary.rosterWarning().ifPresent(log::warn);
         return summary;
     }
 }

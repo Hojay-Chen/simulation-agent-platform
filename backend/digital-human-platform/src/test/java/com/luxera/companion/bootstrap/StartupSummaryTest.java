@@ -1,6 +1,7 @@
 package com.luxera.companion.bootstrap;
 
 import com.luxera.companion.bootstrap.StartupSummary.Recovery;
+import com.luxera.companion.bootstrap.StartupSummary.Roster;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
@@ -14,10 +15,11 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * {@link StartupSummary} 的测试。
  *
  * <h2>为什么这一行摘要值得有测试</h2>
- * 因为它是**运维面唯一一个"装配对不对"的入口**。§8.6.7 的四个数各自回答一个
+ * 因为它是**运维面唯一一个"装配对不对"的入口**。§8.6.7 的每个数各自回答一个
  * 运维问题, 而它们的失效方式不是抛异常, 是**印一行看起来正常的日志**:
- * 类型数少了(某个 {@code registerTypes} 没被调到)、替身数非零(有东西读不回来)
- * —— 这两种情况在屏幕上与健康状态长得一模一样, 唯一的区别就是那几个数。
+ * 类型数少了(某个 {@code registerTypes} 没被调到)、替身数非零(有东西读不回来)、
+ * 座位数与"应当跑的人数"对不上(有人而没被装进来)
+ * —— 这几种情况在屏幕上与健康状态长得一模一样, 唯一的区别就是那几个数。
  *
  * <h2>为什么其中一条测试是在钉<b>格式</b></h2>
  * 因为这一行会被 {@code grep}。人、脚本、看板都会按 {@code [Sim] 装配完成} 与
@@ -27,6 +29,9 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  */
 class StartupSummaryTest {
 
+    /** 库里一个 agent 都没有 —— 大多数测试不关心花名册, 用它把噪声压掉。 */
+    private static final Roster NO_AGENTS = new Roster(0, 0);
+
     private static Recovery healthy() {
         return new Recovery(12, 0, 8, 3);
     }
@@ -34,7 +39,7 @@ class StartupSummaryTest {
     @Test
     void 一行摘要把四个运维问题都说全了() {
         StartupSummary summary = new StartupSummary(
-                47, 7, List.of(), 1, 1, healthy(), 1000L);
+                47, 7, List.of(), 1, 1, NO_AGENTS, healthy(), 1000L);
 
         String line = summary.describe();
 
@@ -44,6 +49,9 @@ class StartupSummaryTest {
         assertTrue(line.contains("7 个命名空间"), line);
         assertTrue(line.contains("1 个 World"), line);
         assertTrue(line.contains("1 个 Human"), line);
+        // 座位数与应当跑的人数必须并排出现 —— 只有座位那个数时, "库里还没有人"
+        // 与"有人而没被装进来"印出来是同一句话。
+        assertTrue(line.contains("在册 0 个 agent(应当跑 0 个)"), line);
         assertTrue(line.contains("账本 12 条"), line);
         assertTrue(line.contains("0 条替身"), line);
         assertTrue(line.contains("计划 8 项"), line);
@@ -60,7 +68,7 @@ class StartupSummaryTest {
         // 这是"有一批历史只能以替身重建"的样子: 数值上可能全对, 但解释丢了。
         // 摘要不该因为这件事而拒印 —— 恰恰相反, 它必须在场, 否则运维看不到它。
         Recovery damaged = new Recovery(12, 3, 8, 3);
-        StartupSummary summary = new StartupSummary(47, 7, List.of(), 1, 1, damaged, 1000L);
+        StartupSummary summary = new StartupSummary(47, 7, List.of(), 1, 1, NO_AGENTS, damaged, 1000L);
 
         assertTrue(summary.recovery().hasOpaqueEntries(),
                 "3 条替身必须让判据为真 —— 它是这一行里唯一一个'健康状态为假'的判据");
@@ -90,11 +98,11 @@ class StartupSummaryTest {
     @Test
     void 类型与数量计数不能是负数() {
         assertThrows(IllegalArgumentException.class,
-                () -> new StartupSummary(-1, 0, List.of(), 0, 0, healthy(), 1000L));
+                () -> new StartupSummary(-1, 0, List.of(), 0, 0, NO_AGENTS, healthy(), 1000L));
         assertThrows(IllegalArgumentException.class,
-                () -> new StartupSummary(0, 0, List.of(), -1, 0, healthy(), 1000L));
+                () -> new StartupSummary(0, 0, List.of(), -1, 0, NO_AGENTS, healthy(), 1000L));
         assertThrows(IllegalArgumentException.class,
-                () -> new StartupSummary(0, 0, List.of(), 0, -1, healthy(), 1000L));
+                () -> new StartupSummary(0, 0, List.of(), 0, -1, NO_AGENTS, healthy(), 1000L));
     }
 
     @Test
@@ -103,12 +111,12 @@ class StartupSummaryTest {
         // 而 §8.5.6 的第一条硬约束就是"恢复必须在 tick 壳之前跑完"。
         // 这两件事必须分得开, 所以这里不允许用 null 表示"没有"。
         assertThrows(NullPointerException.class,
-                () -> new StartupSummary(0, 0, List.of(), 0, 0, null, 1000L));
+                () -> new StartupSummary(0, 0, List.of(), 0, 0, NO_AGENTS, null, 1000L));
     }
 
     @Test
     void 没有冲突时不打告警() {
-        StartupSummary summary = new StartupSummary(47, 7, List.of(), 1, 1, healthy(), 1000L);
+        StartupSummary summary = new StartupSummary(47, 7, List.of(), 1, 1, NO_AGENTS, healthy(), 1000L);
         assertTrue(summary.conflictWarning().isEmpty(),
                 "没有冲突时必须是空的 —— 调用方写 ifPresent(log::warn) 才是全部");
     }
@@ -116,7 +124,7 @@ class StartupSummaryTest {
     @Test
     void 有冲突时告警里带着冲突的类型名() {
         StartupSummary summary = new StartupSummary(47, 7,
-                List.of("device.phone.v1"), 1, 1, healthy(), 1000L);
+                List.of("device.phone.v1"), 1, 1, NO_AGENTS, healthy(), 1000L);
 
         String warning = summary.conflictWarning().orElseThrow(
                 () -> new AssertionError("有一个类型名冲突, 告警不该是空的"));
@@ -134,12 +142,95 @@ class StartupSummaryTest {
         // 于是"日志里说的"与"装配时的"不是同一件事。这是记录类的常规纪律,
         // 但它是这里唯一一处可能被漏掉的防御, 所以钉一条。
         List<String> mutable = new java.util.ArrayList<>(List.of("a.v1"));
-        StartupSummary summary = new StartupSummary(1, 1, mutable, 0, 0, healthy(), 1L);
+        StartupSummary summary = new StartupSummary(1, 1, mutable, 0, 0, NO_AGENTS, healthy(), 1L);
 
         mutable.add("b.v1");
 
         assertEquals(1, summary.conflicts().size(),
                 "外部改动不该影响已经造好的摘要 —— 否则日志会印出一个后来才出现的冲突");
         assertThrows(UnsupportedOperationException.class, () -> summary.conflicts().add("c.v1"));
+    }
+
+    // ─────────────────── 花名册那一侧: 座位数与应当跑的人数 ───────────────────
+
+    @Test
+    void 库里有人而座位上没人时告警把三个数都报出来() {
+        // 这是 §8.6.3 第 5/6 步还没落地时的样子 —— 也是本类唯一一个
+        // "两个来源对不上"的数: 库说该跑 3 个, 座位上 0 个。
+        StartupSummary summary = new StartupSummary(
+                47, 7, List.of(), 1, 0, new Roster(3, 3), healthy(), 1000L);
+
+        assertEquals(3L, summary.unseatedAgents(),
+                "应当跑的 3 个全部没有座位 —— 差额必须数得出来");
+
+        String warning = summary.rosterWarning().orElseThrow(
+                () -> new AssertionError("有 3 个 agent 应当跑而没有座位, 告警不该是空的"));
+
+        // 三个数都要在: 只说"有人没被装进来"的告警, 收到的人还得自己去查有几个。
+        assertTrue(warning.contains("在册 3 个 agent"), warning);
+        assertTrue(warning.contains("3 个应当跑"), warning);
+        assertTrue(warning.contains("只有 0 个"), warning);
+        // 而且必须与"库里一个人都没有"分开说 —— 那两件事要做的事完全不同。
+        assertTrue(warning.contains("不是「还没有人」"), warning);
+    }
+
+    @Test
+    void 库里一个人都没有时不打告警() {
+        // 平台还没建出第一个 agent。世界是空的, 这没有任何问题 ——
+        // 一条在"还没开始"时就喊的告警, 会让真正该喊的那一次也被忽略。
+        StartupSummary summary = new StartupSummary(
+                47, 7, List.of(), 1, 0, NO_AGENTS, healthy(), 1000L);
+
+        assertTrue(summary.rosterWarning().isEmpty(),
+                "库里一个 agent 都没有不是故障 —— 它是'还没有人'");
+        assertEquals(0L, summary.unseatedAgents());
+    }
+
+    @Test
+    void 全员暂停时不打告警() {
+        // 在册 3 个、应当跑 0 个、座位 0 个 —— 空座位表是**对的**, 不是缺口。
+        // 这一条是把判据钉在 unseatedAgents() 而不是 humanCount == 0 上的理由:
+        // 后者每次全员暂停都会喊一遍, 而一个每次都喊的告警等于没有告警。
+        StartupSummary summary = new StartupSummary(
+                47, 7, List.of(), 1, 0, new Roster(3, 0), healthy(), 1000L);
+
+        assertTrue(summary.rosterWarning().isEmpty(),
+                "所有人都是暂停的, 空座位表正是应该的样子");
+        assertEquals(0L, summary.unseatedAgents());
+    }
+
+    @Test
+    void 座位比应当跑的多时不算出负数个没座位的人() {
+        // 反方向的不等是另一个问题(她被暂停了而座位还在, 或物化时没按运行档过滤),
+        // 不该被算成"负数个没座位的人"—— 那样印出来的差是荒谬的。
+        StartupSummary summary = new StartupSummary(
+                47, 7, List.of(), 1, 5, new Roster(3, 3), healthy(), 1000L);
+
+        assertEquals(0L, summary.unseatedAgents(),
+                "座位比应当跑的多时, 差额取 0 而不是负数");
+        assertTrue(summary.rosterWarning().isEmpty(),
+                "这个方向今天不报警 —— 见 unseatedAgents() 的注释");
+    }
+
+    @Test
+    void 应当跑的不可能多于在册的() {
+        // 应当跑是"在册"的一个子集。这个不等式不成立说明两个数不是从同一份名单上
+        // 数出来的 —— 而那样印出来的摘要会让人以为有 4 个人, 库里只有 3 个。
+        assertThrows(IllegalArgumentException.class, () -> new Roster(3, 4),
+                "应当跑多于在册时必须当场拒绝, 而不是印一行自相矛盾的摘要");
+    }
+
+    @Test
+    void 花名册计数不能是负数() {
+        assertThrows(IllegalArgumentException.class, () -> new Roster(-1, 0));
+        assertThrows(IllegalArgumentException.class, () -> new Roster(0, -1));
+    }
+
+    @Test
+    void 花名册不能为空() {
+        // 省略它就会让 humanCount 那个 0 无法解释: 分不出"库里还没有人"
+        // 与"有人而没被装进来"。所以这里不允许用 null 表示"没有花名册"。
+        assertThrows(NullPointerException.class,
+                () -> new StartupSummary(0, 0, List.of(), 0, 0, null, healthy(), 1000L));
     }
 }

@@ -1,6 +1,7 @@
 package com.luxera.companion.bootstrap;
 
 import com.luxera.companion.persistence.DomainPayloadCodec;
+import com.luxera.companion.persistence.repository.AgentOwnershipRecordRepository;
 import com.luxera.companion.persistence.store.ActionCommandStore;
 import com.luxera.companion.persistence.store.ActivityStore;
 import com.luxera.companion.persistence.store.EffectLedgerStore;
@@ -26,7 +27,6 @@ import java.time.Duration;
 import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -89,6 +89,9 @@ class SimulationConfigurationTest {
     SimulationTick tick;
     @Autowired
     StartupSummary summary;
+    /** 直接拿库比数 —— 因为 startupSummary 里那个在册数是从这条路径来的。 */
+    @Autowired
+    AgentOwnershipRecordRepository ownership;
 
     // ─────────────────────── 第 1~3 步: 类型、编解码器、九个 store ───────────────────────
 
@@ -163,16 +166,31 @@ class SimulationConfigurationTest {
         // 这一条钉的是当前这一层的**真实状态**, 而不是一个期望。
         // 它是故意的: 一个座位数为零的运行时与一个正常的运行时, 在任何一处计数上
         // 都没有区别 —— 心跳照跳、计数照涨、日志照打"装配完成"。
-        // 所以"没有人"这件事必须被一个断言说出来, 于是等 §3.6.8 那一层落地时,
+        // 所以"没有人"这件事必须被一个断言说出来, 于是等 §8.6.3 第 5/6 步落地时,
         // 这里会红一次, 而那次红会逼着改它的人读一遍上面这句话。
-        assertFalse(summary.hasHumans(),
-                "场景里出现人了 —— 那么 StartupSummary 的 Recovery 那一段也该跟着变成真的, "
+        assertEquals(0, runtime.seatCount(),
+                "场景里出现座位了 —— 那么 StartupSummary 的 Recovery 那一段也该跟着变成真的, "
                         + "而不是 SimulationConfiguration 里写死的那四个零");
 
         assertEquals(registry.size(), summary.typeCount(),
                 "摘要里的类型数与注册表的实际大小不一致 —— 这行日志是运维看这一层的唯一入口");
         assertEquals(runtime.seatCount(), summary.humanCount());
         assertEquals(50L, summary.tickMs());
+
+        // 花名册那一侧必须真的接在库上 —— 不是"装配了一个看起来对的数"。
+        // 与库的实际行数比, 而不是与一个写死的 0 比: 后者在库里有 agent 时会假绿。
+        assertEquals(ownership.count(), summary.roster().registered(),
+                "摘要里的在册数与 agent_ownership 的实际行数不一致 —— "
+                        + "那说明 AgentRegistry bean 接的不是这张表, 或者查的不是同一个库");
+        assertTrue(summary.roster().runnable() <= summary.roster().registered(),
+                "应当跑的不可能多于在册的");
+
+        // 告警与判据必须同进同出。这一条比"断言今天没有告警"强: 它同时钉住了
+        // 「库里一个人都没有」与「有人而没被装进来」不该被印成同一句话 ——
+        // 前者是正常状态, 后者是装配缺口, 而它们在只报座位数时长得一模一样。
+        assertEquals(summary.unseatedAgents() > 0, summary.rosterWarning().isPresent(),
+                "rosterWarning() 该响的时候必须响、不该响的时候必须是空的 —— 实际: "
+                        + summary.rosterWarning().orElse("(无)"));
     }
 
     @Test
