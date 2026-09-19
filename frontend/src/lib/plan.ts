@@ -263,7 +263,7 @@ export interface DiffRow {
 
 export const DIFF_META: Record<DiffKind, { label: string; hint: string }> = {
   added: { label: '新增', hint: '这一版计划里多出来的。可能是她自己加的, 也可能是插进来的。' },
-  removed: { label: '删除', hint: '这一版里没有了。**不是"跳过"** —— 跳过会留在表上, 删除是它真的不在她今天的打算里了。' },
+  removed: { label: '删除', hint: '这一版里没有了。不是"跳过" —— 跳过会留在表上, 删除是它真的不在她今天的打算里了。' },
   moved: { label: '移了时间', hint: '同一件事, 开始时间变了。§3.5.6 里"把作业的开始时间设成穿完衣服的时间"就是这个。' },
   resized: { label: '改了时长', hint: '开始没变, 但占用的时间变长或变短了。' },
   kept: { label: '没动', hint: '两版之间完全一致。' },

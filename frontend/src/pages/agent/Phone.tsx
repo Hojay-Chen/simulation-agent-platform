@@ -2,10 +2,9 @@ import { useState } from 'react'
 import { Play, RefreshCw, Volume2, VolumeX } from 'lucide-react'
 import { explainPerception } from '@/api/client'
 import { useAsync } from '@/lib/useAsync'
-import { Button, ErrorNote, Field, Panel } from '@/components/ui'
+import { Button, ErrorNote, Field, InfoTip, Panel } from '@/components/ui'
 import { describeError } from '@/components/Section'
 import { AwarenessLadder, MessageLadder } from '@/components/viz/Gauge'
-import { GapNote } from '@/components/viz/panels'
 
 /**
  * 「手机」—— 她的手机会不会吵到她。
@@ -53,21 +52,27 @@ export function Phone({ agentId }: { agentId: string }) {
   return (
     <div className="space-y-5">
       <Panel
-        title="推演: 这样一条刺激到了她那儿, 会不会被注意到"
+        title={
+          <div className="flex min-w-0 items-center gap-1.5">
+            <h2 className="text-sm font-medium text-ink">推演: 她会注意到吗</h2>
+            <InfoTip label="这个推演是真的在打扰她吗">
+              不是 —— 这是<b>只读的仿真</b>: 它把这条刺激在四层(聊天平台免打扰 / 手机策略 / 她的活动 /
+              她的注意力)里各跑一遍, 然后原样返回每一层的判定。点多少次都不会真的打扰她,
+              也不会在她那边留下任何痕迹。
+            </InfoTip>
+          </div>
+        }
         action={
           <Button variant="ghost" onClick={explain.reload}>
             <RefreshCw size={13} />重跑一次
           </Button>
         }
       >
-        <p className="mb-4 text-xs leading-relaxed text-ink-faint">
-          这是**只读的仿真**: 它把这条刺激在四层(聊天平台免打扰 / 手机策略 / 她的活动 /
-          她的注意力)里各跑一遍, 然后原样返回每一层的判定。点多少次都不会真的打扰她,
-          也不会在她那边留下任何痕迹。
-        </p>
-
         <div className="grid gap-4 sm:grid-cols-[1fr_auto]">
-          <Field label="刺激的类型" hint="后端 `ExternalEventType` 里的取值。">
+          <Field
+            label="刺激的类型"
+            hint={<InfoTip label="这里为什么用机器取值">列表是后端支持的全部刺激类型, 原样列出, 方便和日志里的取值对上。</InfoTip>}
+          >
             <select
               className="input"
               value={eventType}
@@ -81,7 +86,12 @@ export function Phone({ agentId }: { agentId: string }) {
 
           <Field
             label={`这条刺激有多重要 · ${importance.toFixed(2)}`}
-            hint="这是**刺激本身**的属性(salience), 不是她的状态。她的状态由服务端自己取。"
+            hint={
+              <InfoTip label="这个数字是谁的" align="end">
+                这是<b>刺激本身</b>的属性(有多显眼), 不是她的状态。她此刻的状态由服务端自己去取,
+                所以拖这个滑块只改"来的这条消息", 不改她。
+              </InfoTip>
+            }
           >
             <div className="flex items-center gap-3 pt-2">
               <input
@@ -129,10 +139,20 @@ export function Phone({ agentId }: { agentId: string }) {
                 thresholds={d.thresholds}
               />
               <dl className="mt-4 space-y-1.5 text-xs">
-                <Row k="strategy" v={d.perception.strategy} />
-                <Row k="triggersCognition" v={d.perception.triggersCognition ? '是 —— 会进认知链' : '否 —— 到此为止'} />
+                <Row
+                  k="strategy"
+                  label="判定用的策略"
+                  v={d.perception.strategy}
+                  hint="感知用哪条策略判的 —— 机器取值, 排查时用得上。"
+                />
+                <Row
+                  k="triggersCognition"
+                  label="会不会进认知链"
+                  v={d.perception.triggersCognition ? '是 —— 会进认知链' : '否 —— 到此为止'}
+                  hint="进了认知链, 她才会对它做出反应。"
+                />
               </dl>
-              <p className="mt-3 text-[11px] leading-relaxed text-ink-faint">
+              <p className="mt-3 text-pretty text-[11px] leading-relaxed text-ink-soft">
                 {d.perception.triggersCognition
                   ? '这一条会进入认知链, 她会对它做出反应。'
                   : '这一条不会进入认知链 —— 她可能"隐约感到"了一下, 但不会为它停下来。这不是丢弃, 是一条明确的判定。'}
@@ -144,18 +164,21 @@ export function Phone({ agentId }: { agentId: string }) {
               <dl className="space-y-1.5 text-xs">
                 <Row
                   k="notificationMode"
+                  label="通知模式"
                   v={notificationModeZh(d.device.notificationMode)}
-                  hint="手机这一层的通知模式。它由手机的 NotificationPolicy 决定 —— **和聊天平台的会话免打扰是两件事**。"
+                  hint="手机这一层的通知模式, 由手机自己的通知策略决定 —— 和聊天平台的会话免打扰是两件事。"
                 />
                 <Row
                   k="doNotDisturb"
+                  label="手机免打扰"
                   v={d.device.doNotDisturb ? '开着' : '关着'}
-                  hint="手机自己的免打扰。它决定信号到了之后**怎么响**, 不决定要不要发。"
+                  hint="手机自己的免打扰。它决定信号到了之后怎么响, 不决定要不要发。"
                 />
                 <Row
                   k="phoneLocation"
+                  label="手机在哪"
                   v={phoneLocationZh(d.device.phoneLocation)}
-                  hint="手机在哪儿。放在另一个房间和拿在手里, 对「她能不能听见」是完全不同的两件事。"
+                  hint="放在另一个房间和拿在手里, 对「她能不能听见」是完全不同的两件事。"
                 />
               </dl>
               <div className="mt-4 rounded-lg border border-line bg-sunken/40 px-3 py-2">
@@ -171,120 +194,171 @@ export function Phone({ agentId }: { agentId: string }) {
             {/* ③ 她 */}
             <Panel title="③ 她此刻在做什么、还剩多少余量">
               <dl className="space-y-1.5 text-xs">
-                <Row k="life.description" v={d.life.description} />
-                <Row k="life.activity" v={d.life.activity} />
+                <Row k="life.description" label="她此刻" v={d.life.description} />
+                <Row k="life.activity" label="手上的活动" v={d.life.activity} />
                 <Row
                   k="life.attentionDemand"
+                  label="要占多少注意力"
                   v={d.life.attentionDemand}
                   hint="她手上的事要占多少注意力。占得越多, 同样的刺激越进不来。"
                 />
                 <Row
                   k="life.sleeping"
+                  label="睡着了吗"
                   v={d.life.sleeping ? '睡着' : '醒着'}
                   hint="睡着的时候, 视觉通道整个关闭 —— 手机响了也看不见。"
                 />
-                <Row k="mind.focus" v={num(d.mind.focus)} />
-                <Row k="mind.energy" v={num(d.mind.energy)} />
+                <Row
+                  k="mind.focus"
+                  label="专注"
+                  v={num(d.mind.focus)}
+                  hint="注意力的实际输入。它高的时候, 一条普通消息连「隐约感到」都到不了。"
+                />
+                <Row
+                  k="mind.energy"
+                  label="精力"
+                  v={num(d.mind.energy)}
+                  hint="她还能撑多久。"
+                />
               </dl>
             </Panel>
           </div>
 
           {/* ④ 决策 */}
-          <Panel title="④ 她的决定">
+          <Panel
+            title={
+              <div className="flex min-w-0 items-center gap-1.5">
+                <h2 className="text-sm font-medium text-ink">④ 她的决定</h2>
+                <InfoTip label="下面这两行是给谁看的">
+                  <span className="font-mono">policy</span> 是哪条规则做出的这个判断,
+                  <span className="mx-1 font-mono">type</span> 是决定的种类。两者一起回答"为什么是这个反应" ——
+                  它们不是给人读的文案, 是排查用的定位信息, 所以原样显示。
+                </InfoTip>
+              </div>
+            }
+          >
             <div className="space-y-3">
-              <p className="text-sm leading-relaxed text-ink">{d.decision.reason}</p>
+              <p className="text-pretty text-sm leading-relaxed text-ink">{d.decision.reason}</p>
               <dl className="grid gap-1.5 sm:grid-cols-2">
-                <Row k="policy" v={d.decision.policy} />
-                <Row k="type" v={d.decision.type} />
+                <Row k="policy" label="依据的规则" v={d.decision.policy} />
+                <Row k="type" label="决定的种类" v={d.decision.type} />
               </dl>
-              <p className="text-[11px] leading-relaxed text-ink-faint">
-                `policy` 是**哪条规则**做出的这个判断, `type` 是决定的种类。两者一起
-                回答"为什么是这个反应"—— 它们不是给人读的文案, 是给排查用的定位信息,
-                所以原样显示。
-              </p>
             </div>
           </Panel>
         </>
       )}
 
       <div className="grid gap-5 lg:grid-cols-2">
-        <Panel title="两层免打扰, 谁也替不了谁">
-          <div className="space-y-3 text-xs leading-relaxed">
-            <div className="rounded-lg border border-line bg-sunken/40 px-4 py-3">
-              <p className="font-medium text-ink">第一层 · 聊天平台: 要不要**发出**通知</p>
-              <p className="mt-1 text-ink-faint">
-                一个会话被设成免打扰之后, 聊天平台**根本不发**那条通知信号。
-                她那边什么都不会收到 —— 连"隐约感到"都没有。这一层属于聊天平台,
-                在 <span className="font-mono">chat.luxera.top</span> 的会话设置里改。
-              </p>
+        <div className="flex items-start gap-2 rounded-xl border border-line bg-raised px-4 py-3">
+          <InfoTip tone="warn" label="两层免打扰分别是谁管的">
+            <div className="space-y-3">
+              <div>
+                <p className="font-medium text-ink">第一层 · 聊天平台: 要不要<b>发出</b>通知</p>
+                <p className="mt-1">
+                  一个会话被设成免打扰之后, 聊天平台<b>根本不发</b>那条通知信号。
+                  她那边什么都不会收到 —— 连"隐约感到"都没有。这一层属于聊天平台,
+                  在 <span className="font-mono">chat.luxera.top</span> 的会话设置里改。
+                </p>
+              </div>
+              <div>
+                <p className="font-medium text-ink">第二层 · 她的手机: 信号到了<b>怎么响</b></p>
+                <p className="mt-1">
+                  信号到了之后, 手机按自己的通知策略(通知音量 / 铃声 / 闹钟 / 媒体四个通道 + 免打扰)
+                  决定响不响、多响。这一层属于她, 就画在这一页上面那两栏里。
+                </p>
+              </div>
+              <div>
+                <p className="font-medium text-ink">第三层 · 她自己的活动与注意力</p>
+                <p className="mt-1">
+                  两层都没拦的时候她仍然可能"没听见" —— 那来自她手上在做的事和还剩多少余量(上面 ③④ 两栏)。
+                  三种"没反应"的原因完全不同: 把第一层的原因说成第三层, 会让人去调她的专注度,
+                  而真正该做的是去改会话设置。
+                </p>
+              </div>
             </div>
-            <div className="rounded-lg border border-line bg-sunken/40 px-4 py-3">
-              <p className="font-medium text-ink">第二层 · 她的手机: 信号到了**怎么响**</p>
-              <p className="mt-1 text-ink-faint">
-                信号到了之后, 手机按自己的 <span className="font-mono">NotificationPolicy</span>
-                (通知音量 / 铃声 / 闹钟 / 媒体四个通道 + 免打扰) 决定响不响、多响。
-                这一层属于她, 在「手机」这一页。
-              </p>
-            </div>
-            <p className="text-ink-faint">
-              两层都没拦的时候她仍然可能"没听见"—— 那第三种情况来自她的**活动和注意力**
-              (上面 ③④ 两栏)。三种"没反应"的原因完全不同, 而界面上必须能分辨:
-              把第一层的原因说成第三层, 会让人去调她的专注度, 而真正该做的是改会话设置。
-            </p>
-          </div>
-        </Panel>
-
-        <Panel title="一条消息到她手里的五级台阶">
-          <MessageLadder />
-          <p className="mt-3 text-[11px] leading-relaxed text-ink-faint">
-            第 4 级(她自己去看)是消息正文进入她的**唯一**路径。第 3 级之前,
-            她连"是谁发的"都不知道 —— 通知里只有 meta, 没有正文也没有发信人。
+          </InfoTip>
+          <p className="text-xs leading-relaxed text-ink-soft">
+            免打扰有<b>两层</b>: 聊天平台决定要不要发出通知, 她的手机决定到了怎么响。
+            再加上她自己的活动与注意力 —— 三种"没反应"的原因完全不同。
           </p>
+        </div>
+
+        <Panel
+          title={
+            <div className="flex min-w-0 items-center gap-1.5">
+              <h2 className="text-sm font-medium text-ink">一条消息到她手里的五步</h2>
+              <InfoTip label="为什么要分五步">
+                第 4 步(她自己去看)是消息正文进入她的<b>唯一</b>路径。第 3 步之前,
+                她连"是谁发的"都不知道 —— 通知里只有 meta, 没有正文也没有发信人。
+              </InfoTip>
+            </div>
+          }
+        >
+          <MessageLadder />
         </Panel>
       </div>
 
-      <Panel title="这一页读不到什么">
-        <div className="grid gap-3 lg:grid-cols-2">
-          <GapNote title="四个声道的音量">
-            <p>
-              上面 ② 那三个字段是 `perception/explain` 顺带给的设备快照。V2.2 §4.2 里
-              真正那套 `AudioSystem`(NOTIFICATION / RINGTONE / ALARM / MEDIA 四个 0–1 的
-              连续音量)整个 <span className="font-mono">phone/</span> 包(11 个类)
-              <b>没有任何 HTTP 面</b>。
-            </p>
-            <p>
-              缺的端点: <span className="font-mono">GET /api/companions/{'{id}'}/world/devices</span>。
-            </p>
-            <p>
-              所以这一页**不能**画那四个滑杆 —— 画出来就只能是一组假数字, 而假数字在
-              一个"她会不会被吵到"的页面上是最不该出现的东西。
-            </p>
-          </GapNote>
-          <GapNote title="电量、应用列表、她的通讯录">
-            <p>
-              §4.3 的 `DeviceApplication`(她在手机上装了哪些应用、每个应用能不能发通知)
-              同样没有读取面。§4.4 的 `ChatApplication`(她自己那份聊天软件里的会话、
-              免打扰)也没有。
-            </p>
-            <p>
-              这一块的关键在 §4.1 的分界: **数字设备世界**是她可以改的
-              (装应用、调音量), **数字世界**不是。前端目前读到的两个世界混在
-              `perception/explain` 一个返回体里, 分不出哪个字段归哪一边。
-            </p>
-          </GapNote>
-        </div>
-      </Panel>
+      <div className="flex items-start gap-2 rounded-xl border border-line bg-raised px-4 py-3">
+        <InfoTip tone="warn" label="这一页读不到的两样东西">
+          <div className="space-y-3">
+            <div>
+              <p className="font-medium text-ink">四个声道的音量</p>
+              <p className="mt-1">
+                上面 ② 那几个字段是这次推演顺带给的设备快照。真正那套音量系统
+                (通知 / 铃声 / 闹钟 / 媒体四个 0–1 的连续音量)整个
+                <span className="font-mono"> phone/ </span>包<b>没有任何 HTTP 面</b>。
+              </p>
+              <p className="mt-1">
+                缺的端点: <span className="font-mono">GET /api/companions/{'{id}'}/world/devices</span>。
+                所以这一页不能画那四个滑杆 —— 画出来只能是一组假数字, 而假数字放在一个
+                "她会不会被吵到"的页面上是最不该出现的东西。
+              </p>
+            </div>
+            <div>
+              <p className="font-medium text-ink">电量、应用列表、她的通讯录</p>
+              <p className="mt-1">
+                她在手机上装了哪些应用、每个应用能不能发通知, 以及她自己那份聊天软件里的会话 ——
+                同样都没有读取面。
+              </p>
+              <p className="mt-1">
+                关键的分界是: <b>数字设备世界</b>是她可以改的(装应用、调音量),
+                <b>数字世界</b>不是。目前读到的两个世界混在一次返回里, 分不出哪个字段归哪一边。
+              </p>
+            </div>
+          </div>
+        </InfoTip>
+        <p className="text-xs leading-relaxed text-ink-soft">
+          这一页看到的是<b>设备快照</b>, 不是设备面板 —— 四个声道的音量、装了什么应用都还读不到。
+        </p>
+      </div>
     </div>
   )
 }
 
-function Row({ k, v, hint }: { k: string; v?: string | number | null; hint?: string }) {
+/**
+ * 一行"名字 · 值"。
+ *
+ * <h2>为什么显示中文名、却还留着 `k`</h2>
+ *
+ * `k` 是后端字段名 —— 直接摆在屏幕上, 一个不写代码的人看不出"notificationMode"是什么。
+ * 所以给人看的是 `label`; `k` 只留在问号的读屏名里, 让排查的人仍然能把这一行和
+ * 接口返回体对起来。说明也从原生 `title` 换成了问号: 原生 tooltip 在触屏上根本出不来。
+ */
+function Row({ k, label, v, hint }: {
+  k: string
+  label: string
+  v?: string | number | null
+  hint?: string
+}) {
   return (
-    <div className="flex items-baseline gap-2" title={hint}>
-      <dt className="shrink-0 font-mono text-ink-faint">{k}</dt>
+    <div className="flex items-baseline gap-2">
+      <dt className="shrink-0 text-ink-faint">{label}</dt>
       <dd className="min-w-0 text-ink-soft">
         {v === undefined || v === null || v === '' ? '—' : v}
       </dd>
+      {hint && (
+        <InfoTip label={`${label}(字段 ${k})是什么意思`}>{hint}</InfoTip>
+      )}
     </div>
   )
 }

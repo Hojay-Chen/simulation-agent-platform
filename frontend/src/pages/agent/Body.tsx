@@ -9,7 +9,7 @@ import {
   summarizeVitals,
 } from '@/lib/body'
 import { useAsync } from '@/lib/useAsync'
-import { Button, Empty, Panel } from '@/components/ui'
+import { Button, Empty, InfoTip, Panel } from '@/components/ui'
 import { describeError } from '@/components/Section'
 import { GaugeGroup } from '@/components/viz/Gauge'
 import { GapNote } from '@/components/viz/panels'
@@ -47,7 +47,14 @@ export function Body({ agentId }: { agentId: string }) {
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0">
           {top ? (
-            <p className="text-sm text-ink">{describeReading(top)}</p>
+            <p className="flex items-center gap-1.5 text-sm text-ink">
+              {describeReading(top)}
+              <InfoTip label="这一页为什么只挑一项说">
+                这一句挑的是<b>偏离中间位置最多</b>的那一项, 不是综合评分 ——
+                十九个量的权重文档里没有出处, 编一个公式出来只会得到一个没人能解释的数。
+                全都在中间时这里就不说话, 因为那时确实没有可说的。
+              </InfoTip>
+            </p>
           ) : readings.length > 0 ? (
             <p className="text-sm text-ink-soft">
               所有量都在中间位置 —— 没有哪一项明显偏离, 所以这里不总结。
@@ -61,13 +68,14 @@ export function Body({ agentId }: { agentId: string }) {
             </p>
           )}
         </div>
-        <Button variant="ghost" onClick={state.reload}><RefreshCw size={13} />刷新</Button>
+        <div className="flex items-center gap-2">
+          <InfoTip label="看这一页会不会打扰她">
+            不会 —— 打开这一页<b>不触发任何认知</b>, 它只是读一份只读的快照。
+            这些数字由认知链在她处理每一件事的时候持续写入。
+          </InfoTip>
+          <Button variant="ghost" onClick={state.reload}><RefreshCw size={13} />刷新</Button>
+        </div>
       </div>
-
-      <p className="text-xs text-ink-faint">
-        打开这一页**不会**触发任何认知 —— 它是只读的快照。这些数字由认知链在她处理
-        每一件事的时候持续写入。
-      </p>
 
       {state.error && <p className="text-sm text-danger">{describeError(state.error)}</p>}
       {state.loading && !state.data && <Empty>读取中…</Empty>}
@@ -83,56 +91,68 @@ export function Body({ agentId }: { agentId: string }) {
       {groups.map((g) => <GaugeGroup key={g.group} group={g.group} items={g.items} />)}
 
       <div className="grid gap-5 lg:grid-cols-2">
-        <Panel title="她的五感从哪进来">
+        <Panel
+          title={
+            <div className="flex min-w-0 items-center gap-1.5">
+              <h2 className="text-sm font-medium text-ink">她的五感从哪进来</h2>
+              <InfoTip label="这张表为什么是说明而不是数据">
+                它告诉你看她的感知从哪五条通道进来, 但读不到"她的听觉现在多灵敏" ——
+                感官通道的灵敏度还没有读取面。
+                <br /><br />
+                嗅觉和触觉是<b>持续影响</b>的主要落点: 坏气味要立刻反应,
+                而温度会一直拉着温暖值往下走, 直到环境变了或者她穿上衣服。
+              </InfoTip>
+            </div>
+          }
+        >
           <ul className="space-y-2.5">
             {SENSE_CHANNELS.map((s) => (
               <li key={s.key} className="text-xs">
                 <span className="flex items-baseline gap-2">
                   <span className="font-medium text-ink">{s.label}</span>
                   <span className="font-mono text-[11px] text-accent">{s.via}</span>
+                  <InfoTip label={`${s.label}这条通道`}>{s.hint}</InfoTip>
                 </span>
-                <span className="mt-0.5 block leading-relaxed text-ink-faint">{s.hint}</span>
               </li>
             ))}
           </ul>
-          <p className="mt-4 text-[11px] leading-relaxed text-ink-faint">
-            嗅觉和触觉是**持续影响**(A 类)的主要落点: 坏气味要立刻反应, 而温度会
-            一直拉着温暖值往下走, 直到环境变了或者她穿上衣服。
-          </p>
         </Panel>
 
-        <Panel title="这一页读不到什么">
-          <div className="space-y-3">
-            <GapNote title="感官通道的灵敏度没有面">
-              <p>
-                上面那张表是**说明**, 不是数据 —— 它告诉你看她的感知从哪五条通道进来,
-                但读不到"她的听觉现在多灵敏"。
-              </p>
-              <p>
-                缺的端点: <code>GET /api/companions/{'{id}'}/body/senses</code>。
-                落地之后上面那份 `via` 就该换成读回来的门限值。
-              </p>
-            </GapNote>
-            <GapNote title="衣物不是一个对象">
-              <p>
-                §3.2.5 里"穿衣服"之所以能把温度的影响顶掉, 是因为**衣服是对象** ——
-                它有保暖值, 她穿上它是往自己的对象集合里加了一项。而目前对象集合
-                (她拥有什么、身上穿着什么)没有任何读取面。
-              </p>
-              <p>
-                所以界面上能看见"温暖值很低", 看不见"因为她没穿外套"。后者才是可行动的
-                那一半。
-              </p>
-            </GapNote>
-            <GapNote title="身体 ≠ 心智">
-              <p>
-                这一页只显示**身体与情绪的当前值**。她"此刻在想什么"不在这里, 在
-                「心智」页; 她"今天在做什么"在「今天」页。三页分开是三件不同的事,
-                混在一页会让"她饿了"和"她在想晚饭"看起来像同一类信息。
-              </p>
-            </GapNote>
-          </div>
-        </Panel>
+        <div className="flex items-start gap-2 rounded-xl border border-line bg-raised px-4 py-3">
+          <InfoTip tone="warn" label="这一页读不到的三样东西">
+            <div className="space-y-3">
+              <GapNote title="感官通道的灵敏度没有面">
+                <p>
+                  上面那张表是<b>说明</b>, 不是数据 —— 读不到"她的听觉现在多灵敏"。
+                </p>
+                <p>
+                  缺的端点: <code>GET /api/companions/{'{id}'}/body/senses</code>。
+                  落地之后上面那份通道说明就该换成读回来的门限值。
+                </p>
+              </GapNote>
+              <GapNote title="衣物不是一个对象">
+                <p>
+                  "穿衣服"之所以能把温度的影响顶掉, 是因为<b>衣服是对象</b> ——
+                  它有保暖值, 她穿上它是往自己的对象集合里加了一项。而目前对象集合
+                  (她拥有什么、身上穿着什么)没有任何读取面。
+                </p>
+                <p>
+                  所以界面上能看见"温暖值很低", 看不见"因为她没穿外套"。后者才是可行动的那一半。
+                </p>
+              </GapNote>
+              <GapNote title="身体 ≠ 心智">
+                <p>
+                  这一页只显示<b>身体与情绪的当前值</b>。她"此刻在想什么"不在这一页;
+                  她"今天在做什么"在「今天」页。三页分开是三件不同的事,
+                  混在一页会让"她饿了"和"她在想晚饭"看起来像同一类信息。
+                </p>
+              </GapNote>
+            </div>
+          </InfoTip>
+          <p className="text-xs leading-relaxed text-ink-soft">
+            能看见"温暖值很低", 看不见"因为她没穿外套" —— 她身上穿着什么、她的感官现在多灵敏, 都还读不到。
+          </p>
+        </div>
       </div>
     </div>
   )

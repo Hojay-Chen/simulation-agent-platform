@@ -158,7 +158,7 @@ export function initCredentials(): Credentials {
     }
   } catch {
     // sessionStorage 不可用(隐私模式/单测 node 环境) 或存的是坏 JSON ——
-    // 退回空凭据: 用户在「接入」页重填即可, 不该因此白屏。
+    // 退回空凭据: 用户在「填入密钥」那一栏重填即可, 不该因此白屏。
     credentials = EMPTY_CREDENTIALS
   }
   return credentials
@@ -250,7 +250,11 @@ async function request<T>(url: string, init: RequestInit = {}): Promise<T> {
     // 管理面: 带空 X-Admin-Key 没有意义 —— 服务端 adminKey 未配时回 503,
     // 配了但值不对回 401, 两种都让用户看不懂。这里提前拦下, 说清是哪一把缺了。
     if (!credentials.adminKey) {
-      throw new ApiError(0, '未配置管理密钥 —— 先在「接入」页填入 X-Admin-Key')
+      // 那一栏现在叫「填入密钥」(`ApiPortal.tsx` 的标签表)。**名字必须跟标签一致** ——
+      // 「接入」是它当年作为独立页 `/connect` 时的旧名, 现在页面上找不到这三个字, 于是
+      // 这句本来最好懂的提示变成了一句指不到地方的指路(已实测: 同一屏的横幅说「填入密钥」,
+      // 面板里的报错说「接入」, 两者指的是同一个标签页)。
+      throw new ApiError(0, '未配置管理密钥 —— 先在「填入密钥」那一栏填入 X-Admin-Key')
     }
     headers.set('X-Admin-Key', credentials.adminKey)
   } else if (face === 'studio') {
@@ -260,7 +264,7 @@ async function request<T>(url: string, init: RequestInit = {}): Promise<T> {
     headers.set('Authorization', `Bearer ${credentials.studioToken}`)
   } else {
     if (!credentials.clientKey) {
-      throw new ApiError(0, '未配置客户端 API Key —— 先在「接入」页填入 sap_... 钥匙')
+      throw new ApiError(0, '未配置客户端 API Key —— 先在「填入密钥」那一栏填入 sap_... 钥匙')
     }
     headers.set('Authorization', `Bearer ${credentials.clientKey}`)
   }

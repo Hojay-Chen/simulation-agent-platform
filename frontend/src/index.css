@@ -132,8 +132,23 @@
 
 @layer components {
   /* 与仓 1 同名的语义类 —— 定义也照抄, 这样两边的按钮是同一个按钮 */
+  /*
+   * 2026-09-19 这次同步: 仓 1 那边给 `.btn` 补了 focus-visible 焦点环与 active 按压反馈,
+   * 本文件当时没跟上 —— 两个站点的同一个按钮于是有了两种键盘表现。这正是文件头
+   * (`tailwind.config.js`) 警告的那种漂移: **不会有人报告它, 但所有人都会觉得哪里不对**。
+   *
+   * 三处一起抄过来, 少一处就还是两个按钮:
+   * - `focus-visible:ring-*` 键盘焦点环。`.btn` 原来只有浏览器默认 outline, 而
+   *   `transition` 会把它压成一层几乎看不见的细线 —— 键盘用户看不出自己在哪。
+   *   用 `ring-offset-surface` 而不是默认白圈, 因为暗色主题下白圈是个亮框。
+   * - `active:scale-[0.98]` 按下时的物理反馈。
+   * - `transition`(全属性)而不是 `transition-colors` —— 上面那个 scale 是 transform,
+   *   用 `transition-colors` 它会是瞬变, 按下去"咯噔"一下。
+   */
   .btn {
-    @apply inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-lg px-3.5 py-2 text-sm font-medium transition-colors select-none;
+    @apply inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-lg px-3.5 py-2 text-sm font-medium transition select-none
+           focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40 focus-visible:ring-offset-2 focus-visible:ring-offset-surface
+           active:scale-[0.98];
   }
   .btn-primary {
     @apply btn bg-accent text-accent-ink hover:bg-accent/90;

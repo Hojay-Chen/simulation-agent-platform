@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react'
 import { EVENT_CLASS_META, eventLabelZh, isKnownEventType, weightOf, type EventClass } from '@/lib/events'
 import { DIFF_META, fmtClock, fmtDuration, TONE_META, type DiffRow, type PlanTone } from '@/lib/plan'
+import { InfoTip } from '@/components/ui'
 
 /**
  * 图例、缺口说明、事件行、计划差异表 —— 跨页共用的小件。
@@ -20,7 +21,11 @@ import { DIFF_META, fmtClock, fmtDuration, TONE_META, type DiffRow, type PlanTon
  * 的话, 用户得自己去发现"原来底下那片半透明是 A 类"; 把形状写进图例, 这件事一眼就
  * 成立。而形状是色盲用户唯一能依赖的东西, 所以它必须出现在图例里, 而不是只在实现里。
  */
-export function CategoryLegend({ classes }: { classes?: readonly EventClass[] }) {
+export function CategoryLegend({ classes, showHint = true }: {
+  classes?: readonly EventClass[]
+  /** 关掉每类后面那句解释 —— 当旁边已经有一处逐条列出同样的说明时, 再说一遍就是重复。 */
+  showHint?: boolean
+}) {
   const list = classes ?? (['effect', 'sensory', 'schedule', 'fact'] as const)
   return (
     <ul className="space-y-1.5">
@@ -31,7 +36,7 @@ export function CategoryLegend({ classes }: { classes?: readonly EventClass[] })
             <Shape c={c} />
             <span className="min-w-0">
               <span className={`font-medium ${m.text}`}>{m.label}</span>
-              <span className="ml-2 leading-relaxed text-ink-faint">{m.hint}</span>
+              {showHint && <span className="ml-2 leading-relaxed text-ink-faint">{m.hint}</span>}
             </span>
           </li>
         )
@@ -68,18 +73,36 @@ function Shape({ c }: { c: EventClass }) {
  * 区域会被读成"她没有数据", 而实际上数据在服务端存在、只是没有出口 —— 这两种情况
  * 需要完全不同的行动(一个去查数据, 一个去催接口)。所以缺口的写法必须包含三件事:
  * **缺什么、本该由哪个端点提供、现在能看到的是哪一部分**。
+ *
+ * <p>这三件事里只有第一件(标题)留在版面上, 后两件挂在标题的问号上 —— 它们要写清楚,
+ * 但不必每一眼都读一遍。
  */
 export function GapNote({
   title = '这块还读不到',
+  tip,
   children,
 }: {
   title?: string
-  children: ReactNode
+  /**
+   * 缺口的细节(缺哪个端点、为什么现在读不到) —— 挂在标题的问号上。
+   *
+   * 缺口本身**必须看得见**(标题就是那个"看得见"), 但它的来龙去脉属于"读一遍就够"的
+   * 内容。一整页缺口面板里塞五六段话, 结果是没人读缺口 —— 那比不写更糟。
+   */
+  tip?: ReactNode
+  children?: ReactNode
 }) {
   return (
     <div className="rounded-lg border border-dashed border-line-strong bg-sunken/50 px-4 py-3">
-      <p className="text-xs font-medium text-ink-soft">{title}</p>
-      <div className="mt-1 space-y-1 text-[11px] leading-relaxed text-ink-faint">{children}</div>
+      <p className="flex items-center gap-1.5 text-xs font-medium text-ink-soft">
+        <span>{title}</span>
+        {tip && <InfoTip label={`「${title}」这块缺什么`}>{tip}</InfoTip>}
+      </p>
+      {children && (
+        <div className="mt-1 space-y-1 text-pretty text-[11px] leading-relaxed text-ink-faint">
+          {children}
+        </div>
+      )}
     </div>
   )
 }

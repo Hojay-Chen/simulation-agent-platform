@@ -13,7 +13,7 @@ import {
 import { useAsync } from '@/lib/useAsync'
 import { AgentPickerBar, useAgentChoice } from '@/components/AgentPicker'
 import { RequireStudio } from '@/components/StudioLogin'
-import { Button, Empty, Panel } from '@/components/ui'
+import { Button, Empty, InfoTip, Panel } from '@/components/ui'
 import { describeError } from '@/components/Section'
 import { CategoryLegend, ClassTally, EventRow, GapNote, tally, type EventRowData } from '@/components/viz/panels'
 
@@ -46,11 +46,11 @@ import { CategoryLegend, ClassTally, EventRow, GapNote, tally, type EventRowData
  * 这个流里的 `USER_MESSAGE_READ` 正是那件事发生的**记录**; 运维看的是"她读过了",
  * 不是"她读到了什么"。所以这里渲染的是 payload 的字段摘要(`summarizePayload`),
  * 而不是任何消息内容。运维要看正文有一个专门的出口(`/v5/pending-messages`,
- * 见「运行时」页), 那个出口的存在恰恰是为了让这一页可以干净。
+ * 见「运行状态」页), 那个出口的存在恰恰是为了让这一页可以干净。
  */
 export function Events() {
   return (
-    <RequireStudio why="事件流读的是她在 server:8091 上的运行时事件 —— 需要先用你的账号登录。">
+    <RequireStudio why="事件流是她的运行时记录, 属于个人数据。">
       <Body />
     </RequireStudio>
   )
@@ -114,10 +114,21 @@ function Body() {
     <div className="space-y-5">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0">
-          <h1 className="text-base font-medium text-ink">事件流</h1>
-          <p className="mt-1 max-w-2xl text-xs leading-relaxed text-ink-faint">
-            世界往她那儿递的每一件事, 按机制分成三类。这一页是**运维面** ——
-            想知道她今天过得怎么样, 请去她那一侧的「今天」。
+          <div className="flex min-w-0 items-center gap-1.5">
+            <h1 className="text-base font-medium text-ink">事件流</h1>
+            <InfoTip label="「事件流」这一页回答什么">
+              这一页是<b className="font-medium text-ink">运维面</b>: 线上到底发生了几件事、
+              有没有没登记的类型、有哪一条卡在台阶上没往下走。
+              <br />
+              <br />
+              想知道她今天过得怎么样, 不在这一页 —— 那在「总览」和她那一侧的「数字人」里。
+              两张面刻意分开: 一个只是好奇她今天干了什么的人, 在这页会看到一屏
+              <span className="font-mono"> USER_MESSAGE_NOTIFIED </span>
+              这样的机器名, 于是要么看不懂、要么学会忽略它。
+            </InfoTip>
+          </div>
+          <p className="mt-1 max-w-2xl text-pretty text-xs leading-relaxed text-ink-faint">
+            世界往她那儿递的每一件事, 按机制分成三类。
           </p>
         </div>
         <Button variant="ghost" onClick={() => { world.reload(); reloadAgents() }}>
@@ -146,29 +157,37 @@ function Body() {
         <Panel title="这个流是空的">
           <Empty>
             没有读到任何事件。
-            <span className="mt-1 block text-[11px] leading-relaxed">
-              它在今天**多半是正常的**: 这个端点是一个滚动窗口, 而且今天线上只会往里写
-              `WORLD_EVENT_OCCURRED` 一种类型。空 ≠ 她没有在活动, 只表示这个出口暂时
-              没有东西可给。见下面那块缺口说明。
-            </span>
+            <InfoTip label="空列表意味着什么">
+              它在今天<b className="font-medium text-ink">多半是正常的</b>: 这个端点是一个
+              滚动窗口, 而且今天线上只会往里写
+              <span className="font-mono"> WORLD_EVENT_OCCURRED </span>
+              一种类型。空 ≠ 她没有在活动, 只表示这个出口暂时没有东西可给。
+              哪些东西读不到, 见页面底部的缺口说明。
+            </InfoTip>
           </Empty>
         </Panel>
       )}
 
       {total > 0 && (
         <>
-          <Panel title="按机制分一分">
+          <Panel
+            title={
+              <div className="flex min-w-0 items-center gap-1.5">
+                <h2 className="text-sm font-medium tracking-wide text-ink">三类机制各有多少条</h2>
+                <InfoTip label="为什么四个数加起来大于总数">
+                  一条事件可以同时属于两类(§5.2: 一个事件可以实现多个能力接口 ——
+                  手机响了既要立刻被听见, 又会在戴耳机时留下一个短时的听阈偏移)。
+                  所以下面四个数加起来<b className="font-medium text-ink">可以大于</b>总数。
+                </InfoTip>
+              </div>
+            }
+          >
             <ClassTally counts={counts} />
-            <p className="mt-3 text-[11px] leading-relaxed text-ink-faint">
-              一条事件可以同时属于两类(§5.2: 一个事件可以实现多个能力接口 —— 手机响了
-              既要立刻被听见, 又会在戴耳机时留下一个短时的听阈偏移)。所以四个数加起来
-              **可以大于**总数。
-            </p>
           </Panel>
 
           <div className="grid gap-5 lg:grid-cols-[1fr_auto]">
             <Panel
-              title="图例: 三类各是什么机制"
+              title="三类机制"
               action={<span className="text-xs text-ink-faint">点一下筛掉这一类</span>}
             >
               <ul className="space-y-1">
@@ -182,9 +201,10 @@ function Body() {
                         aria-pressed={off}
                         onClick={() => setActive(toggle(active, c))}
                         className={`flex w-full items-start gap-2.5 rounded-lg border px-3 py-1.5 text-left transition
+                                    focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/40
                                     ${off
                                       ? 'border-line-strong bg-sunken opacity-50'
-                                      : `border-line ${m.bg}`}`}
+                                      : `border-line ${m.bg} hover:border-line-strong`}`}
                       >
                         <span className={`mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full ${m.dot}`} aria-hidden="true" />
                         <span className="min-w-0">
@@ -193,7 +213,9 @@ function Body() {
                             <span className="font-mono text-[10px] text-ink-faint tnum">{counts[c]}</span>
                             {off && <span className="text-[10px] text-ink-faint">已筛掉</span>}
                           </span>
-                          <span className="mt-0.5 block text-[11px] leading-relaxed text-ink-faint">{m.hint}</span>
+                          <span className="mt-0.5 block text-pretty text-[11px] leading-relaxed text-ink-faint">
+                            {m.hint}
+                          </span>
                         </span>
                       </button>
                     </li>
@@ -205,19 +227,66 @@ function Body() {
               )}
             </Panel>
 
-            <Panel title="形状不是装饰" className="lg:w-72">
-              <CategoryLegend classes={['effect', 'sensory', 'schedule']} />
-              <p className="mt-3 text-[11px] leading-relaxed text-ink-faint">
-                三类事件在时间轴上是**三种形状**: A 类是一片一直延伸的带子(A 类没有结束
-                时间), B 类是一根不占时间的针, C 类就是那些条子本身。图例里画出形状,
-                是为了让"哪个是哪一类"不需要靠颜色去记。
-              </p>
+            <Panel
+              className="lg:w-72"
+              title={
+                <div className="flex min-w-0 items-center gap-1.5">
+                  <h2 className="text-sm font-medium tracking-wide text-ink">时间轴上的形状</h2>
+                  <InfoTip label="图例里为什么画形状">
+                    三类事件在时间轴上是<b className="font-medium text-ink">三种形状</b>:
+                    A 类是一片一直延伸的带子(A 类没有结束时间), B 类是一根不占时间的针,
+                    C 类就是那些条子本身。
+                    <br />
+                    <br />
+                    图例里画出形状, 是为了让"哪个是哪一类"不必靠颜色去记 —— 色觉差异的
+                    用户看不出琥珀和玫红, 但看得出"一片底色"和"一根针"。
+                  </InfoTip>
+                </div>
+              }
+            >
+              <CategoryLegend classes={['effect', 'sensory', 'schedule']} showHint={false} />
             </Panel>
           </div>
 
           <Panel
-            title={`事件 (${rows.length}${rows.length !== total ? ` / ${total}` : ''})`}
-            action={<span className="text-xs text-ink-faint">新的在上</span>}
+            title={
+              <div className="flex min-w-0 items-center gap-1.5">
+                <h2 className="text-sm font-medium tracking-wide text-ink">
+                  事件记录 ({rows.length}{rows.length !== total ? ` / ${total}` : ''})
+                </h2>
+                <InfoTip label="一条消息到她手里要经过哪五步">
+                  一条消息到她手里要经过五个
+                  <b className="font-medium text-ink">各自独立</b>的动作,
+                  它们在流里是五条不同的记录:
+                  <br />
+                  <br />
+                  <span className="block space-y-1">
+                    <span className="block">1. <span className="font-mono">USER_MESSAGE_RECEIVED</span> — 聊天平台落库了。这是世界的事实, 她还不知道。</span>
+                    <span className="block">2. <span className="font-mono">USER_MESSAGE_NOTIFIED</span> — 通知信号到了手机, 手机响了。这是实时感官刺激。</span>
+                    <span className="block">3. <span className="font-mono">USER_MESSAGE_NOTICED</span> — 她感知到了声音。此时她仍然不知道是谁、说了什么。</span>
+                    <span className="block">4. <span className="font-mono">USER_MESSAGE_READ</span> — 她自己做出了「看一眼手机」的动作。正文到此才第一次进入她。</span>
+                    <span className="block">5. <span className="font-mono">USER_MESSAGE_DEFERRED</span> — 她决定先不处理。已读不回是一个决定, 不是故障。</span>
+                  </span>
+                  <br />
+                  第 2 条与第 1 条不是同一件事 —— 这正是 §2.3 要修的那个技术债: 把"送达"和
+                  "她注意到了"画成同一个状态, 于是永远分不清"平台没送到"和"她没看见"。
+                  在这一页上它们是两条可以分别计数的记录。
+                </InfoTip>
+              </div>
+            }
+            action={
+              <span className="flex items-center gap-1 text-xs text-ink-faint">
+                新的在上
+                <InfoTip label="每行下面那串字是什么" align="end">
+                  每行下面的那串 <span className="font-mono">字段=值</span> 是 payload 的
+                  <b className="font-medium text-ink">字段摘要</b>, 不是消息内容。
+                  <br />
+                  <br />
+                  这条规则是硬的: 正文进入她只有一条路径 —— 她自己去看。要看正文有另一个
+                  出口(见下方面板)。
+                </InfoTip>
+              </span>
+            }
           >
             {rows.length === 0 ? (
               <Empty>当前筛选下一条都不剩。</Empty>
@@ -226,88 +295,87 @@ function Body() {
                 {rows.map((r) => <EventRow key={r.key} row={r} />)}
               </ul>
             )}
-            {rows.length > 0 && (
-              <p className="mt-3 text-[11px] leading-relaxed text-ink-faint">
-                每行下面的那串 `字段=值` 是 payload 的**字段摘要**, 不是消息内容。
-                这条规则是硬的: 正文进入她只有一条路径 —— 她自己去看。见下面。
-              </p>
-            )}
           </Panel>
         </>
       )}
 
-      <div className="grid gap-5 lg:grid-cols-2">
-        <Panel title="这个流里最重要的一件事: 五级台阶">
-          <div className="space-y-2 text-xs leading-relaxed text-ink-soft">
-            <p>
-              一条消息到她手里要经过五个**各自独立**的动作, 它们在流里是五条不同的记录:
-            </p>
-            <ol className="ml-4 list-decimal space-y-1 text-ink-faint">
-              <li><span className="font-mono text-ink-soft">USER_MESSAGE_RECEIVED</span> — 聊天平台落库了。这是**世界的事实**, 她还不知道。</li>
-              <li><span className="font-mono text-ink-soft">USER_MESSAGE_NOTIFIED</span> — 通知信号到了手机, 手机响了。这是**实时感官刺激**(B 类)。</li>
-              <li><span className="font-mono text-ink-soft">USER_MESSAGE_NOTICED</span> — 她感知到了声音。此时她**仍然不知道是谁、说了什么**。</li>
-              <li><span className="font-mono text-ink-soft">USER_MESSAGE_READ</span> — 她自己做出了「看一眼手机」的动作。**正文到此才第一次进入她。**</li>
-              <li><span className="font-mono text-ink-soft">USER_MESSAGE_DEFERRED</span> — 她决定先不处理。已读不回是一个决定, 不是故障。</li>
-            </ol>
-            <p className="text-ink-faint">
-              第 2 条与第 1 条不是同一件事 —— 这正是 §2.3 要修的那个技术债: 把"送达"和
-              "她注意到了"画成同一个状态, 于是永远分不清"平台没送到"和"她没看见"。
-              在这一页上它们是两条可以分别计数的记录。
-            </p>
-          </div>
-        </Panel>
-
-        <Panel title="这一页读不到什么">
-          <div className="space-y-3">
-            <GapNote title="没有跨 agent 的事件流">
-              <p>
-                这一页每次只能看**一个** agent —— 因为线上的每一个事件端点都挂在
-                <code className="mx-1">/api/companions/{'{id}'}/</code> 下面。运维真正想
-                问的那个问题("刚刚全平台发生了什么")因此答不了。
-              </p>
-              <p>
-                缺的端点: <code>GET /api/v10/events?since=&amp;type=&amp;limit=</code>,
-                按时间倒序、跨 agent、带 `agentId` 字段。
-              </p>
-            </GapNote>
-            <GapNote title="返回体里还没有 category">
-              <p>
-                §7.2 的 `world_event` 表有一个 `category` 列
-                (`STATE_EFFECT` / `SENSORY` / `SCHEDULED`, 逗号分隔可多值), 而线上的
-                返回体里**只有 `type` 字符串**。
-              </p>
-              <p>
-                所以这一页的分类暂时靠前端一张译表(`lib/events.ts` 的 `CLASS_OF_TYPE`)。
-                那份译表在服务端把 `category` 发出来之后**就该删掉** —— 它现在的价值是
+      <Panel title="这一页读不到什么">
+        <div className="grid gap-3 lg:grid-cols-3">
+          <GapNote
+            title="没有跨数字人的事件流"
+            tip={
+              <>
+                这一页每次只能看<b className="font-medium text-ink">一个</b>数字人 ——
+                因为线上的每一个事件端点都挂在
+                <span className="font-mono"> /api/companions/{'{id}'}/ </span>
+                下面。运维真正想问的那个问题(「刚刚全平台发生了什么」)因此答不了。
+                <br />
+                <br />
+                缺的端点: <span className="font-mono">GET /api/v10/events?since=&amp;type=&amp;limit=</span>,
+                按时间倒序、跨数字人、带 <span className="font-mono">agentId</span> 字段。
+              </>
+            }
+          />
+          <GapNote
+            title="返回体里还没有类别字段"
+            tip={
+              <>
+                §7.2 的 <span className="font-mono">world_event</span> 表有一个
+                <span className="font-mono"> category </span>列
+                (<span className="font-mono">STATE_EFFECT / SENSORY / SCHEDULED</span>,
+                逗号分隔可多值), 而线上的返回体里<b className="font-medium text-ink">只有 type 字符串</b>。
+                <br />
+                <br />
+                所以这一页的分类暂时靠前端一张译表(<span className="font-mono">lib/events.ts</span>
+                的 <span className="font-mono">CLASS_OF_TYPE</span>)。那份译表在服务端把
+                <span className="font-mono"> category </span>发出来之后就该删掉 —— 它现在的价值是
                 "让三类机制在界面上先成立", 风险是"它会和调度器漂"。
-                `eventClassesOf()` 已经写成"服务端给了就采信", 所以那一天不需要改页面。
-              </p>
-            </GapNote>
-            <GapNote title="窗口只有 50 条, 且今天只有一种类型">
-              <p>
-                这个端点是**滚动 50 条**的, 所以"事件流"在这里其实是"最近 50 条"。
-                而今天线上往它里面写的只有 `WORLD_EVENT_OCCURRED` —— 上面那些台阶记录
+                <span className="font-mono"> eventClassesOf() </span>已经写成"服务端给了就采信",
+                所以那一天不需要改页面。
+              </>
+            }
+          />
+          <GapNote
+            title="窗口只有 50 条, 且今天只有一种类型"
+            tip={
+              <>
+                这个端点是<b className="font-medium text-ink">滚动 50 条</b>的, 所以"事件流"
+                在这里其实是"最近 50 条"。而今天线上往它里面写的只有
+                <span className="font-mono"> WORLD_EVENT_OCCURRED </span>—— 上面那些台阶记录
                 目前是从别处(认知链的日志)产生的, 还没汇进这一条流。
-              </p>
-              <p>
-                因此现在打开这一页多半会看到一片同一种类型。这不是页面坏了, 是数据源
-                还很窄: 缺的是一条把 EventFabric(`boundary/event/*`)的写入**镜像一份**
-                到可查询存储的通道。
-              </p>
-            </GapNote>
-          </div>
-        </Panel>
-      </div>
+                <br />
+                <br />
+                因此现在打开这一页多半会看到一片同一种类型。这不是页面坏了, 是数据源还很窄:
+                缺的是一条把 EventFabric(<span className="font-mono">boundary/event/*</span>)
+                的写入镜像一份到可查询存储的通道。
+              </>
+            }
+          />
+        </div>
+      </Panel>
 
-      <Panel title="词汇表: 这个世界能发生哪些事">
+      <Panel
+        title={
+          <div className="flex min-w-0 items-center gap-1.5">
+            <h2 className="text-sm font-medium tracking-wide text-ink">词汇表: 这个世界能发生哪些事</h2>
+            <InfoTip label="这份清单是从哪来的">
+              来自 <span className="font-mono">GET /api/meta/event-types</span>, 是
+              <b className="font-medium text-ink">运行时从服务端读来的</b>, 不是前端抄下来的一份 ——
+              第三方应用随时可以往注册表里加自己的类型。
+              <br />
+              <br />
+              所以它读不到时这一块是空的, 而事件流本身照常显示: 两者没有依赖关系。
+            </InfoTip>
+          </div>
+        }
+      >
         {catalog.loading && !catalog.data && <Empty>读取中…</Empty>}
 
         {catalog.error && (
-          <p className="text-sm text-danger">
+          <p className="text-pretty text-sm text-danger">
             读不到词汇表: {describeError(catalog.error)}
             <span className="mt-1 block text-[11px] leading-relaxed text-ink-faint">
-              它来自 <code>GET /api/meta/event-types</code>。读不到时这一块是空的 ——
-              而**事件流本身照常显示**, 两者没有依赖关系。
+              目录读不到不影响下面这条流 —— 事件照常显示。
             </span>
           </p>
         )}
@@ -315,9 +383,9 @@ function Body() {
         {catalog.data && (
           <div className="space-y-4">
             <p className="text-xs leading-relaxed text-ink-soft">
-              目录里共 <span className="font-mono tnum">{catalog.data.count}</span> 条事件类型, 分布在{' '}
-              <span className="font-mono tnum">{catalog.data.namespaces.length}</span> 个命名空间里, 按机制分成三类。
-              第三方应用可以随时往注册表里加自己的类型 —— 所以这份清单是**运行时读来的**, 不是前端抄的。
+              共 <span className="font-mono tnum">{catalog.data.count}</span> 条事件类型, 分布在{' '}
+              <span className="font-mono tnum">{catalog.data.namespaces.length}</span> 个命名空间里,
+              按机制分成三类。
             </p>
 
             <div className="grid gap-3 sm:grid-cols-3">
@@ -328,7 +396,7 @@ function Body() {
                     <span className="font-mono text-[10px] text-ink-faint">{c.category}</span>
                     <span className="ml-auto font-mono text-sm text-ink tnum">{c.count}</span>
                   </div>
-                  <p className="mt-1 text-[11px] leading-relaxed text-ink-faint">{c.note}</p>
+                  <p className="mt-1 text-pretty text-[11px] leading-relaxed text-ink-faint">{c.note}</p>
                 </div>
               ))}
             </div>
@@ -342,31 +410,31 @@ function Body() {
                 catalog.data.unclaimed.length > 0 ? 'border-cat-effect/40 bg-cat-effect/10' : 'border-line'
               }`}
             >
-              <p className="text-xs font-medium text-ink">
-                没有消费者的类型:{' '}
-                {catalog.data.unclaimed.length === 0 ? (
-                  <span className="font-normal text-ink-faint">没有 —— 每一条都有人接着</span>
-                ) : (
-                  <span className="font-mono tnum">{catalog.data.unclaimed.length}</span>
-                )}
+              <p className="flex items-center gap-1.5 text-xs font-medium text-ink">
+                <span>
+                  没有消费者的类型:{' '}
+                  {catalog.data.unclaimed.length === 0 ? (
+                    <span className="font-normal text-ink-faint">没有 —— 每一条都有人接着</span>
+                  ) : (
+                    <span className="font-mono tnum">{catalog.data.unclaimed.length}</span>
+                  )}
+                </span>
+                <InfoTip label="「没有消费者」是什么意思">
+                  一条登记了却没有消费者的事件, 要么是留给将来的, 要么是某个 handler 的
+                  订阅键写错了。这两种情况在别处长得一模一样, 所以它由服务端算出来 ——
+                  四十几条逐条比对不该是人干的活。
+                  <br />
+                  <br />
+                  「一条都没有」是<b className="font-medium text-ink">健康状态</b>:
+                  目录里每一条都有明确的消费者。
+                </InfoTip>
               </p>
-              {catalog.data.unclaimed.length > 0 ? (
-                <>
-                  <ul className="mt-1.5 space-y-0.5">
-                    {catalog.data.unclaimed.map((t) => (
-                      <li key={t} className="font-mono text-[11px] text-ink-soft">{t}</li>
-                    ))}
-                  </ul>
-                  <p className="mt-1.5 text-[11px] leading-relaxed text-ink-faint">
-                    一条登记了却没有消费者的事件, 要么是留给将来的, 要么是某个 handler
-                    的订阅键写错了。这两种情况在别处长得一模一样, 所以它由服务端算出来 ——
-                    四十几条逐条比对不该是人干的活。
-                  </p>
-                </>
-              ) : (
-                <p className="mt-1 text-[11px] leading-relaxed text-ink-faint">
-                  这是**健康状态**: 目录里每一条都有明确的消费者。
-                </p>
+              {catalog.data.unclaimed.length > 0 && (
+                <ul className="mt-1.5 space-y-0.5">
+                  {catalog.data.unclaimed.map((t) => (
+                    <li key={t} className="font-mono text-[11px] text-ink-soft">{t}</li>
+                  ))}
+                </ul>
               )}
             </div>
 
@@ -375,17 +443,26 @@ function Body() {
               它的说法随 `matchedCount` 变, 而那个数随数据变。
             */}
             <div className="rounded-lg border border-line px-3 py-2">
-              <p className="text-xs font-medium text-ink">目录与实际的对账</p>
+              <p className="flex items-center gap-1.5 text-xs font-medium text-ink">
+                <span>目录与实际的对账</span>
+                <InfoTip label="这两个数为什么在这里对">
+                  这一段的一个数随代码变、一个随数据变, 所以它们是
+                  <b className="font-medium text-ink">各取一份、在这里对一次</b>的, 而不是服务端
+                  合成的一份 —— 那样会让"这个世界能发生什么"与"今天发生了什么"互相污染。
+                </InfoTip>
+              </p>
               {ledger.matchedCount === 0 ? (
-                <p className="mt-1 text-[11px] leading-relaxed text-ink-soft">
+                <p className="mt-1 text-pretty text-[11px] leading-relaxed text-ink-soft">
                   这个窗口里有 <span className="font-mono tnum">{ledger.observedCount}</span> 种事件名,
-                  而它们**没有一条**属于上面这份目录 —— 两套词汇现在是分开的:
-                  目录用 `namespace.name.vN`(新的事件结构), 而这个流里跑的是
-                  `WorldEventType` 那几个大写名字(旧的认知链)。
+                  而它们<b className="font-medium text-ink">没有一条</b>属于上面这份目录 ——
+                  两套词汇现在是分开的: 目录用
+                  <span className="font-mono"> namespace.name.vN </span>(新的事件结构),
+                  而这个流里跑的是 <span className="font-mono">WorldEventType</span> 那几个大写名字
+                  (旧的认知链)。
                 </p>
               ) : (
                 <>
-                  <p className="mt-1 text-[11px] leading-relaxed text-ink-soft">
+                  <p className="mt-1 text-pretty text-[11px] leading-relaxed text-ink-soft">
                     目录 {catalog.data.count} 条里, 这个窗口出现过{' '}
                     <span className="font-mono tnum">{ledger.matchedCount}</span> 条;
                     从没出现过的 <span className="font-mono tnum">{ledger.neverSeen.length}</span> 条。
@@ -406,22 +483,17 @@ function Body() {
                 </>
               )}
               {ledger.outside.length > 0 && (
-                <p className="mt-2 text-[11px] leading-relaxed text-ink-faint">
+                <p className="mt-2 text-pretty text-[11px] leading-relaxed text-ink-faint">
                   反过来, 这个流里有{' '}
                   <span className="font-mono tnum">{ledger.outside.length}</span> 个名字不在目录里
                   {ledger.matchedCount === 0 ? '(就是上面那些全部)' : ''} —— 它们不是"未登记的错误",
                   只是另一套词汇。
                 </p>
               )}
-              <p className="mt-2 text-[11px] leading-relaxed text-ink-faint">
-                这一段的两个数一个随代码变、一个随数据变, 所以它们是**各取一份、在这里对一次**的,
-                而不是服务端合成的一份 —— 那样会让"这个世界能发生什么"与"今天发生了什么"
-                互相污染。
-              </p>
             </div>
 
             <details className="rounded-lg border border-line px-3 py-2">
-              <summary className="cursor-pointer text-xs font-medium text-ink">
+              <summary className="cursor-pointer text-xs font-medium text-ink hover:text-accent">
                 按命名空间看那 {catalog.data.namespaces.length} 族
               </summary>
               <div className="mt-2 space-y-2">

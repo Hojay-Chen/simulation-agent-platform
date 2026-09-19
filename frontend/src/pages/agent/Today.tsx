@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useMemo, useState, type ReactNode } from 'react'
 import { RefreshCw } from 'lucide-react'
 import { getLife, listWorldEvents, type PlanActivityView } from '@/api/client'
 import {
@@ -17,7 +17,7 @@ import {
   type Span,
 } from '@/lib/plan'
 import { useAsync, useNow } from '@/lib/useAsync'
-import { Button, Empty, Panel } from '@/components/ui'
+import { Button, Empty, InfoTip, Panel } from '@/components/ui'
 import { describeError } from '@/components/Section'
 import { CategoryLegend, GapNote, PlanItemDetail } from '@/components/viz/panels'
 import { DayTimeline, UnscheduledRows, type TimelineBand, type TimelineMarker } from '@/components/viz/Timeline'
@@ -98,8 +98,15 @@ export function Today({ agentId }: { agentId: string }) {
 
       {activities.length > 0 && (
         <Panel
-          title="一天的时间轴"
-          action={<span className="text-xs text-ink-faint">横轴是时间 · 一行 = 一件可以同时进行的事</span>}
+          title={
+            <div className="flex min-w-0 items-center gap-1.5">
+              <h2 className="text-sm font-medium text-ink">她的一天</h2>
+              <InfoTip label="这条时间轴怎么读">
+                横轴是时间, 一行 = 一件可以同时进行的事。三类事件画在<b>同一个坐标系</b>里 ——
+                「手机响的那一刻她正在写作业」这句话只有在同一根轴上才成立, 而那正是这一页最有价值的信息。
+              </InfoTip>
+            </div>
+          }
         >
           <DayTimeline
             layout={layout}
@@ -130,50 +137,66 @@ export function Today({ agentId }: { agentId: string }) {
 
       {pick && (
         <Panel
-          title="这一条"
+          title="这一条的细节"
           action={<Button variant="ghost" onClick={() => setSelected(null)}>收起</Button>}
         >
           <PlanItemDetail title={pick.title} tone={toneOfStatus(pick.status)} fields={fieldsOf(pick)} />
           {pick.interrupted && (
-            <p className="mt-3 text-xs leading-relaxed text-ink-faint">
-              这一条被打断过。她**怎么**重排的, 见「计划表」页 —— 打断不是"暂停再继续",
-              是重排她整张计划表(设计文档 §3.5.6)。
+            <p className="mt-3 flex items-start gap-1.5 text-xs leading-relaxed text-ink-soft">
+              这一条被打断过 —— 她之后重排了整张计划表。
+              <InfoTip label="被打断到底发生了什么">
+                打断不是"暂停再继续", 是<b>重排她整张计划表</b>: 她拿到新情况, 重新想一遍, 产出一版新的计划。
+                改了什么到「计划表」页看。
+              </InfoTip>
             </p>
           )}
         </Panel>
       )}
 
       <div className="grid gap-5 lg:grid-cols-2">
-        <Panel title="图例: 三类事件在时间轴上长什么样">
+        <Panel
+          title={
+            <div className="flex min-w-0 items-center gap-1.5">
+              <h2 className="text-sm font-medium text-ink">时间轴上的三类事件</h2>
+              <InfoTip label="这一页为什么先讲形状">
+                <b className="text-ink-soft">形状</b>比颜色更重要 —— 色觉差异的用户看不出琥珀和玫红,
+                但看得出"一片底色"和"一根针"。所以图例里画的是形状。
+              </InfoTip>
+            </div>
+          }
+        >
           <CategoryLegend classes={['effect', 'sensory', 'schedule']} />
-          <p className="mt-3 text-[11px] leading-relaxed text-ink-faint">
-            <b className="text-ink-soft">形状</b>比颜色更重要 —— 色觉差异的用户看不出
-            琥珀和玫红, 但看得出"一片底色"和"一根针"。
-          </p>
         </Panel>
 
-        <Panel title="这一页读不到什么">
-          <div className="space-y-3">
-            <GapNote title="持续影响没有权威读取面">
-              <p>
-                底下那些琥珀色的带子是从 `world-events` 里的 `ENVIRONMENT_CHANGED`
-                <b>推</b>出来的, 不是读回来的。真正的账本
-                (`ContinuousEffectLedger`)是进程内的, 没有任何 HTTP 面。
-              </p>
-              <p>
-                缺的端点: <code>GET /api/companions/{'{id}'}/world/effects</code>。
-                它落地之前, "她现在到底觉不觉得冷"在界面上没有确定答案。
-              </p>
-            </GapNote>
-            <GapNote title="计划项没有 id">
-              <p>
-                `todayActivities` 里每一项只有 `title`。所以两件同名的事在界面上会被当成
-                一件, 而"改之前 / 改之后"的对照也只能按标题配。
-              </p>
-              <p>缺的字段: `PlanItem.itemId`。</p>
-            </GapNote>
-          </div>
-        </Panel>
+        <div className="flex items-start gap-2 rounded-xl border border-line bg-raised px-4 py-3">
+          <InfoTip tone="warn" label="这一页读不到的两样东西">
+            <div className="space-y-3">
+              <GapNote title="持续影响没有权威读取面">
+                <p>
+                  那些带子是从 <span className="font-mono">world-events</span> 里的
+                  <span className="font-mono"> ENVIRONMENT_CHANGED </span>
+                  <b>推</b>出来的。真正的账本(<span className="font-mono">ContinuousEffectLedger</span>)是进程内的,
+                  没有任何 HTTP 面。
+                </p>
+                <p>
+                  缺的端点: <span className="font-mono">GET /api/companions/{'{id}'}/world/effects</span>。
+                  它落地之前, "她现在到底觉不觉得冷"在界面上没有确定答案。
+                </p>
+              </GapNote>
+              <GapNote title="计划项没有 id">
+                <p>
+                  <span className="font-mono">todayActivities</span> 里每一项只有
+                  <span className="font-mono"> title</span>。所以两件同名的事在界面上会被当成一件,
+                  而"改之前 / 改之后"的对照也只能按标题配。
+                </p>
+                <p>缺的字段: <span className="font-mono">PlanItem.itemId</span>。</p>
+              </GapNote>
+            </div>
+          </InfoTip>
+          <p className="text-xs leading-relaxed text-ink-soft">
+            底下那几条琥珀色带子是<b>推</b>出来的, 不是读回来的 —— 别当成权威数据。
+          </p>
+        </div>
       </div>
     </div>
   )
@@ -218,41 +241,52 @@ function Progress({ value }: { value: number }) {
   )
 }
 
-/** 一条日程的细节字段。抽出来是因为「计划表」页要用同一份。 */
+/**
+ * 一条日程的细节字段。
+ *
+ * 名字给中文, 后端字段名只留在提示里 —— `plannedStart` 摆在屏幕上, 不写代码的人
+ * 不知道那是什么; 但它对排查的人有用, 所以没删, 只是退到第二行。
+ */
 export function fieldsOf(a: PlanActivityView) {
+  const f = (label: string, value: ReactNode, k: string, hint?: string) => ({
+    label,
+    value,
+    hint: hint ? `${hint}(字段 ${k})` : `后端字段 ${k}。`,
+  })
   return [
-    { label: 'plannedStart', value: fmtClock(a.plannedStart ?? null) },
-    { label: 'plannedEnd', value: fmtClock(a.plannedEnd ?? null) },
-    { label: '时长', value: durationOf(a) },
-    { label: 'status', value: a.status ?? '—' },
-    { label: 'type', value: a.type ? `${typeZh(a.type)} (${a.type})` : '—' },
-    {
-      label: 'attentionDemand',
-      value: a.attentionDemand ?? '—',
-      hint: '这件事要占她多少注意力。它和下面的可打断程度一起决定"现在找她合不合适"。',
-    },
-    {
-      label: 'interruptibility',
-      value: a.interruptibility ?? '—',
-      hint: '可打断程度。低的时候插进来的事会被她推迟, 而不是立刻处理。',
-    },
-    {
-      label: 'phoneAvailability',
-      value: a.phoneAvailability ?? '—',
-      hint: '这段时间她的**活动**允不允许她看手机。注意这和手机自己的免打扰是两件事。',
-    },
-    { label: 'moodEffect', value: a.moodEffect ?? '—' },
-    {
-      label: 'progress',
-      value: typeof a.progress === 'number' ? <Progress value={a.progress} /> : '—',
-    },
-    {
-      label: 'interrupted',
-      value: a.interrupted === undefined ? '—' : a.interrupted ? '被打断过' : '没有被打断',
-      hint: '它是一个独立的事实, 不是状态的一种 —— 一件事可以"做完了, 但中途被打断过"。',
-    },
-    { label: 'importance', value: numOr(a.importance) },
-    { label: 'emotionalSignificance', value: numOr(a.emotionalSignificance) },
+    f('计划开始', fmtClock(a.plannedStart ?? null), 'plannedStart'),
+    f('计划结束', fmtClock(a.plannedEnd ?? null), 'plannedEnd'),
+    f('时长', durationOf(a), 'plannedStart / plannedEnd', '从计划开始到结束有多久。'),
+    f('状态', a.status ?? '—', 'status', '她此刻与这件事的关系: 正在做 / 做完了 / 还没到点。'),
+    f('类型', a.type ? `${typeZh(a.type)} (${a.type})` : '—', 'type'),
+    f(
+      '要占的注意力',
+      a.attentionDemand ?? '—',
+      'attentionDemand',
+      '这件事要占她多少注意力。它和可打断程度一起决定"现在找她合不合适"。',
+    ),
+    f(
+      '可打断程度',
+      a.interruptibility ?? '—',
+      'interruptibility',
+      '低的时候插进来的事会被她推迟, 而不是立刻处理。',
+    ),
+    f(
+      '能不能看手机',
+      a.phoneAvailability ?? '—',
+      'phoneAvailability',
+      '这段时间她的「活动」允不允许她看手机。注意这和手机自己的免打扰是两件事。',
+    ),
+    f('对心情的影响', a.moodEffect ?? '—', 'moodEffect', '这件事做完之后会把她的心情推向哪边。'),
+    f('进度', typeof a.progress === 'number' ? <Progress value={a.progress} /> : '—', 'progress'),
+    f(
+      '被打断过吗',
+      a.interrupted === undefined ? '—' : a.interrupted ? '被打断过' : '没有被打断',
+      'interrupted',
+      '它是一个独立的事实, 不是状态的一种 —— 一件事可以"做完了, 但中途被打断过"。',
+    ),
+    f('重要度', numOr(a.importance), 'importance', '这件事在她自己眼里有多重要。'),
+    f('对她意味着多少', numOr(a.emotionalSignificance), 'emotionalSignificance', '这件事牵动她情绪的程度。'),
   ]
 }
 

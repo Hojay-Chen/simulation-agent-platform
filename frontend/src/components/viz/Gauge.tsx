@@ -1,3 +1,4 @@
+import { InfoTip } from '@/components/ui'
 import { GROUP_META, describeReading, type VitalReading } from '@/lib/body'
 import { AWARENESS_META, MESSAGE_LADDER, awarenessOf } from '@/lib/events'
 
@@ -99,7 +100,7 @@ export function Gauge({ reading }: { reading: VitalReading }) {
   )
 }
 
-/** 一组量。组标题带一句说明 —— 这一组回答什么问题。 */
+/** 一组量。组标题带一个问号 —— 这一组回答什么问题挂在上面, 不占版面。 */
 export function GaugeGroup({
   group,
   items,
@@ -110,9 +111,11 @@ export function GaugeGroup({
   if (items.length === 0) return null
   return (
     <div className="space-y-3">
-      <div>
-        <h3 className="text-xs font-medium uppercase tracking-wider text-ink">{GROUP_META[group].label}</h3>
-        <p className="mt-0.5 text-xs leading-relaxed text-ink-faint">{GROUP_META[group].hint}</p>
+      <div className="flex min-w-0 items-center gap-1.5">
+        <h3 className="text-xs font-medium text-ink">{GROUP_META[group].label}</h3>
+        <InfoTip label={`「${GROUP_META[group].label}」这一组是什么`}>
+          {GROUP_META[group].hint}
+        </InfoTip>
       </div>
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
         {items.map((r) => <Gauge key={r.vital.key} reading={r} />)}

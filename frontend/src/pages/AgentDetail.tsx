@@ -18,7 +18,7 @@ import { AGENT_TABS, DEFAULT_TAB, PREFIXED_TABS, distinctTypes, sectionsOf, tabO
 import { RecordView } from '@/components/RecordView'
 import { Section, describeError } from '@/components/Section'
 import { RequireStudio } from '@/components/StudioLogin'
-import { Button, Chip, Empty, ErrorNote, Field, Panel, inputClass } from '@/components/ui'
+import { Button, Chip, Empty, ErrorNote, Field, InfoTip, Panel, inputClass } from '@/components/ui'
 /*
  * 四个"她此刻"的页 + 关系网。`Body` 在这里改名, 因为本文件里已经有一个同名的局部
  * 函数(页面外壳) —— 两个 `Body` 撞在一起时 TypeScript 报的是"属性不存在"这种
@@ -63,7 +63,7 @@ import { Today } from './agent/Today'
  */
 export function AgentDetail() {
   return (
-    <RequireStudio why="agent 详情读的是记忆、关系、生活这些只在 server:8091 上的数据 —— 需要先用你的账号登录。">
+    <RequireStudio why="这一页读的是她的记忆、关系和日常 —— 属于个人数据, 只对本人开放。">
       <Body />
     </RequireStudio>
   )
@@ -123,16 +123,16 @@ function Body() {
       <div className="flex flex-wrap items-center justify-between gap-2">
         <Link
           to="/agents"
-          className="inline-flex items-center gap-1.5 text-sm text-ink-soft hover:text-ink"
+          className="inline-flex items-center gap-1.5 rounded text-sm text-ink-soft transition-colors hover:text-ink"
         >
-          <ArrowLeft size={14} />返回 Agents
+          <ArrowLeft size={14} />返回数字人列表
         </Link>
         <span className="flex items-center gap-2">
           {companion && (
             <Button
               variant="ghost"
               disabled={switching}
-              title={paused ? '让这个 agent 重新推进' : '停止推进(不删任何东西)'}
+              title={paused ? '让她重新开始推进' : '停止推进, 不删任何东西'}
               onClick={() => void toggleLifecycle()}
             >
               {paused ? <Play size={13} /> : <Pause size={13} />}
@@ -152,19 +152,23 @@ function Body() {
         {companion && (
           <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
             <h1 className="text-lg font-medium text-ink">{companion.name || companion.id}</h1>
-            <span className="font-mono text-xs text-ink-faint" title="agent id(本平台标识这个 agent 个体的值)">
+            <span className="font-mono text-xs text-ink-faint" title="她在本平台的编号, 不会变">
               {companion.id}
             </span>
             {companion.handle
-              ? <span className="font-mono text-xs text-accent" title="账号ID(聊天平台侧的标识)">{companion.handle}</span>
-              : <span className="text-xs text-warn">还没有账号ID</span>}
+              ? <span className="font-mono text-xs text-accent" title="聊天平台给她的账号ID">{companion.handle}</span>
+              : <span className="text-xs text-warn">还没有聊天平台账号</span>}
             {paused && <Chip tone="warn">已停止</Chip>}
+            <InfoTip label="上面这两个编号有什么区别" align="center">
+              <span className="font-mono">id</span> 是<b>本平台</b>标识这个数字人的值,
+              <span className="mx-1 font-mono">handle</span> 是聊天平台侧的账号ID。
+              两者永不可互换 —— 前者不可变, 后者由系统分配、她自己也改不了。
+            </InfoTip>
           </div>
         )}
         {paused && (
-          <p className="mt-2 text-xs leading-relaxed text-ink-faint">
-            这个 agent 已停止推进, 也不会再调用模型。记忆、关系、未说完的话都还在 ——
-            继续之后从停下的那一刻接着走。
+          <p className="mt-2 text-xs leading-relaxed text-ink-soft">
+            已停止推进, 也不会再调用模型 —— 记忆、关系、没说完的话都还留着。
           </p>
         )}
       </header>
@@ -178,7 +182,8 @@ function Body() {
               type="button"
               onClick={() => selectTab(t.id)}
               aria-current={active ? 'page' : undefined}
-              className={`shrink-0 whitespace-nowrap border-b-2 px-3 py-2 text-sm transition-colors ${
+              className={`shrink-0 whitespace-nowrap rounded-t border-b-2 px-3 py-2 text-sm transition-colors
+                          focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/40 ${
                 active
                   ? 'border-accent text-accent'
                   : 'border-transparent text-ink-soft hover:text-ink'
@@ -215,13 +220,18 @@ function Body() {
         旁边出现一个 JSON 折叠块, 而那正是这次重做要解决的东西。
       */}
       {tab === 'archive' && companion && (
-        <Panel title="档案原文">
-          <p className="mb-4 text-xs leading-relaxed text-ink-faint">
-            <span className="font-mono text-ink-soft">id</span> 是**本平台**标识这个 agent 个体的值,
-            <span className="mx-1 font-mono text-ink-soft">handle</span> 是聊天平台侧的账号ID。
-            两者永不可互换 —— 前者不可变, 后者由系统分配、她自己也改不了。
-          </p>
-          <RecordView value={companion} empty="读不到这个 agent 的档案。" />
+        <Panel
+          title={
+            <div className="flex min-w-0 items-center gap-1.5">
+              <h2 className="text-sm font-medium text-ink">她的档案(原文)</h2>
+              <InfoTip label="这份原文怎么读">
+                这是接口原样返回的完整档案。字段名保持后端的样子不改 ——
+                你在日志、接口文档、数据库里看到的是同一批名字, 界面上换个说法会让两边对不上号。
+              </InfoTip>
+            </div>
+          }
+        >
+          <RecordView value={companion} empty="读不到这个数字人的档案。" />
         </Panel>
       )}
 
@@ -256,13 +266,14 @@ function MemoryTab({ agentId }: { agentId: string }) {
   return (
     <Panel
       title={
-        <div className="min-w-0">
+        <div className="flex min-w-0 items-center gap-1.5">
           <h2 className="text-sm font-medium text-ink">
-            记忆 <span className="font-normal text-ink-faint">({shown.length})</span>
+            她记得的事 <span className="font-normal text-ink-faint tnum">({shown.length})</span>
           </h2>
-          <p className="mt-0.5 text-xs font-normal leading-relaxed text-ink-faint">
-            搜索走服务端 —— 这里看到的只是一屏, 不在这一屏里的记忆前端搜不到。
-          </p>
+          <InfoTip label="为什么搜不到某条记忆">
+            搜索走服务端, 这里列表也只显示一屏 —— 不在这一屏里的记忆, 前端搜不到,
+            但这不等于她忘了。
+          </InfoTip>
         </div>
       }
       action={<Button variant="ghost" onClick={reload}><RefreshCw size={13} />刷新</Button>}
@@ -282,13 +293,14 @@ function MemoryTab({ agentId }: { agentId: string }) {
           value={input}
           onChange={(e) => setInput(e.target.value)}
           placeholder="搜一条记忆… (回车)"
+          aria-label="搜索她的记忆"
           className="min-w-0 flex-1 bg-transparent text-sm text-ink outline-none placeholder:text-ink-faint"
         />
         {query && (
           <button
             type="button"
             onClick={() => { setInput(''); setQuery('') }}
-            className="shrink-0 text-xs text-ink-soft hover:text-ink"
+            className="shrink-0 rounded text-xs text-ink-soft transition-colors hover:text-ink"
           >
             清空
           </button>
@@ -307,7 +319,7 @@ function MemoryTab({ agentId }: { agentId: string }) {
       <ErrorNote error={error ? describeError(error) : null} />
       {loading && !data && <Empty>读取中…</Empty>}
       {data && shown.length === 0 && (
-        <Empty>{query ? `没有匹配「${query}」的记忆。` : '这个 agent 还没有记忆。'}</Empty>
+        <Empty>{query ? `没有匹配「${query}」的记忆。` : '她还没有记忆。'}</Empty>
       )}
       {shown.length > 0 && (
         <ul className="space-y-3">
@@ -338,7 +350,7 @@ function TypeChip({ active, onClick, children }: {
       type="button"
       onClick={onClick}
       aria-pressed={active}
-      className={`rounded-md border px-2 py-0.5 font-mono text-xs transition ${
+      className={`rounded-md border px-2 py-0.5 font-mono text-xs transition focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/40 ${
         active ? 'border-accent text-accent' : 'border-line text-ink-soft hover:text-ink'
       }`}
     >
@@ -369,11 +381,11 @@ function OpenApiActions({ companion, onDeleted }: { companion: Companion; onDele
 
   if (!clientKey) {
     return (
-      <Panel title="开放面操作">
+      <Panel title="改她的人格, 或删掉她">
         <Empty>
-          手里没有客户端钥 —— 这一块是空的。
-          <Link to="/access" className="ml-1 text-accent hover:underline">去 API 页填一把</Link>
-          , 或用它创建一个属于该客户端的 agent。
+          手里没有客户端钥 —— 这一块用不了。
+          <Link to="/access" className="ml-1 text-accent hover:underline">去「接口密钥」页填一把</Link>
+          , 就能用它改写这个数字人的人格, 或把她删掉。
         </Empty>
       </Panel>
     )
@@ -381,7 +393,7 @@ function OpenApiActions({ companion, onDeleted }: { companion: Companion; onDele
 
   async function submit() {
     if (!description.trim()) {
-      setErr('写一段新的描述 —— 平台会重编译成人格并落一个新版本。')
+      setErr('先写一段新的描述 —— 平台会把它重编译成人格, 并落一个新版本。')
       return
     }
     setBusy(true)
@@ -400,7 +412,7 @@ function OpenApiActions({ companion, onDeleted }: { companion: Companion; onDele
   }
 
   async function remove() {
-    if (!confirm(`删除「${companion.name || companion.id}」? 软删(deleted_at), 认知链不再推进它。`)) return
+    if (!confirm(`删除「${companion.name || companion.id}」? 认知链不再推进她, 记录仍留在库里。`)) return
     try {
       await deleteAgent(companion.id)
       onDeleted()
@@ -411,19 +423,29 @@ function OpenApiActions({ companion, onDeleted }: { companion: Companion; onDele
 
   return (
     <Panel
-      title="开放面操作"
+      title={
+        <div className="flex min-w-0 items-center gap-1.5">
+          <h2 className="text-sm font-medium text-ink">改她的人格, 或删掉她</h2>
+          <InfoTip tone="warn" label="这一块用的是哪张面">
+            这一块走的是 <span className="font-mono">/api/v1/openapi/**</span>(客户端钥),
+            与上面八个标签页走的内省接口是<b>两张不同的面</b> ——
+            上面问的是"你是不是这个人", 这里问的是"你是不是这个 API 客户端"。
+            同一个数字人, 两条独立的准入规则。
+          </InfoTip>
+        </div>
+      }
       action={<Button variant="danger" onClick={() => void remove()}><Trash2 size={13} />删除</Button>}
     >
-      <p className="mb-4 text-xs leading-relaxed text-ink-faint">
-        这一块走的是 <span className="font-mono text-ink-soft">/api/v1/openapi/**</span>(客户端钥),
-        与上面八页走的内省接口是**两张不同的面** —— 上面问的是"你是不是这个人", 这里问的是
-        "你是不是这个 API 客户端"。同一个 agent, 两条独立的准入规则。
-      </p>
       <form className="space-y-4" onSubmit={(e) => { e.preventDefault(); void submit() }}>
         <Field
-          label="新的描述"
+          label="把她改成什么样"
           error={err}
-          hint="每次更新都会落一个 persona 新版本 —— 不改人格只改关系是做不到的。"
+          hint={
+            <InfoTip label="为什么改人格要写一整段描述">
+              每次更新都会落一个<b>人格新版本</b> —— 不改人格、只改关系是做不到的。
+              旧版本不删, 可以到「档案」页对照。
+            </InfoTip>
+          }
         >
           <textarea
             className={`${inputClass} min-h-[88px] resize-y`}
@@ -432,7 +454,14 @@ function OpenApiActions({ companion, onDeleted }: { companion: Companion; onDele
             placeholder="把这个人改成什么样…"
           />
         </Field>
-        <Field label="变更原因 (可选)">
+        <Field
+          label="为什么改 (可选)"
+          hint={
+            <InfoTip label="这一栏会被谁看到" align="center">
+              它会跟着这次改动一起记下来, 之后能从人格版本里翻到。
+            </InfoTip>
+          }
+        >
           <input
             className={inputClass}
             value={reason}
@@ -441,8 +470,12 @@ function OpenApiActions({ companion, onDeleted }: { companion: Companion; onDele
           />
         </Field>
         <div className="flex items-center gap-3">
-          <Button type="submit" disabled={busy}>{busy ? '重编译中…' : '更新人格'}</Button>
-          {done && <span className="text-xs text-ok">已提交, 拉到新版本了 —— 切到「人格」页看</span>}
+          <Button type="submit" disabled={busy}>{busy ? '重编译中…' : '更新她的人格'}</Button>
+          {done && (
+            <span className="text-xs text-ok">
+              已提交, 新版本已经落地 —— 切到「档案」页的「人格的每一版」看
+            </span>
+          )}
         </div>
       </form>
     </Panel>

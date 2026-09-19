@@ -43,16 +43,37 @@ export const BACKEND_OWNED_PREFIXES = [
  */
 export const SPA_PATHS = {
   dashboard: '/',
+  /**
+   * 登录页 —— **不在控制台外壳里**。它是唯一一条不被 `<Layout />` 包住的路由。
+   *
+   * 放进这张表是因为它必须和别的路径一起被 `collidesWithBackend` 检查: 它也是用户会
+   * 直接敲进地址栏的地址。它同时是 `RequireStudio` 的跳转目标, 所以两处引用同一个常量。
+   */
+  login: '/login',
   agents: '/agents',
   /** 运维面: 世界往她那儿递了什么。 */
   events: '/events',
   /** 运维面: 认知链的计数、轨迹、排程与降级。 */
   runtime: '/runtime',
   applications: '/applications',
-  /** 栏目名是「API」, 路径必须是 /access —— 见文件头。 */
+  /** 栏目名是「接口密钥」, 路径必须是 /access —— 见文件头。 */
   access: '/access',
   system: '/system',
 } as const
+
+/**
+ * 聊天平台的地址 —— 账号的**来源**, 所以登录页必须能指过去。
+ *
+ * 它**不进** `SPA_PATHS`: 那张表是"本 SPA 的路由", 而这是一个别人的站点。混进去有
+ * 两个后果 —— `collidesWithBackend` 会拿它去比后端前缀(它压根不属于本 SPA), 而遍历
+ * `SPA_PATHS` 的地方会试图把它渲染成一条内部导航。
+ *
+ * 登录页原来那条「先不登录, 回总览」是个**环**: 总览自己就要登录, 点过去被
+ * `RequireStudio` 原样弹回, 只在 URL 上多留一句 why —— 用户"去"了一趟, 回到原地,
+ * 还多挨一句像责备的话。那一页真正缺的出口不是"回总览"(回不去), 是"我没有账号,
+ * 去哪儿弄一个"。
+ */
+export const CHAT_PLATFORM_URL = 'https://chat.luxera.top'
 
 /**
  * 这个 SPA 路径是不是落在后端独占的前缀之下。

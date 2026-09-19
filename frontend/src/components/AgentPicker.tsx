@@ -80,10 +80,10 @@ export function AgentPicker({
   loading: boolean
 }) {
   if (loading && agents.length === 0) {
-    return <span className="text-xs text-ink-faint">读取 agent 列表…</span>
+    return <span className="text-xs text-ink-faint">读取数字人列表…</span>
   }
   if (agents.length === 0) {
-    return <Empty>你名下还没有 agent —— 运维页看的是它们的运行时。</Empty>
+    return <Empty>你名下还没有数字人 —— 运维页看的是她们的运行状态。</Empty>
   }
   return (
     <label className="flex items-center gap-2 text-xs">

@@ -4,10 +4,10 @@ import { useAsync } from '@/lib/useAsync'
 import { RecordView } from '@/components/RecordView'
 import { describeError } from '@/components/Section'
 import { RequireStudio } from '@/components/StudioLogin'
-import { Button, Empty, ErrorNote, Panel } from '@/components/ui'
+import { Button, Empty, ErrorNote, InfoTip, Panel } from '@/components/ui'
 
 /**
- * Applications —— 应用平台(LAP)目录: 能力 → 应用 → 动作。
+ * 「应用能力」—— 应用平台(LAP)目录: 能力 → 应用 → 动作。
  *
  * <h2>这些数据一直存在, 缺的只是一个出口</h2>
  *
@@ -18,13 +18,13 @@ import { Button, Empty, ErrorNote, Panel } from '@/components/ui'
  *
  * <h2>它回答什么, 不回答什么</h2>
  *
- * 回答的是"**平台**能让 agent 做什么": 有哪些能力、谁实现了它、每个动作的权限级别
- * 与作者写的策略建议(`agentHint`)。不回答"某个 agent 现在正在玩什么" —— 那要有真实
- * 会话才谈得上, 属于运行时, 不属于目录。
+ * 回答的是"**平台**能让数字人做什么": 有哪些能力、谁实现了它、每个动作的权限级别
+ * 与作者写的策略建议(`agentHint`)。不回答"某个数字人现在正在玩什么" —— 那要有真实
+ * 会话才谈得上, 属于运行状态, 不属于目录。
  */
 export function Applications() {
   return (
-    <RequireStudio why="应用目录经 server:8091 取, 那道门要用户 JWT —— 需要先登录。">
+    <RequireStudio why="这一页列的是平台能提供的能力, 数据由数字人平台持有、按账号授权。">
       <Body />
     </RequireStudio>
   )
@@ -36,9 +36,20 @@ function Body() {
 
   return (
     <div className="space-y-5">
-      <div className="flex items-center justify-between gap-3">
+      <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="min-w-0">
-          <h1 className="text-lg font-medium text-ink">Applications</h1>
+          <div className="flex min-w-0 items-center gap-1.5">
+            <h1 className="text-lg font-medium text-ink">应用能力</h1>
+            <InfoTip label="「应用能力」这一页回答什么">
+              平台<b className="font-medium text-ink">能</b>让数字人做什么 —— 一条能力下面
+              挂着实现它的应用, 每个应用下面挂着它能做的动作(动作上还带着权限级别与作者写的
+              策略建议)。
+              <br />
+              <br />
+              它是一份目录, 不是实况: "某个数字人此刻正在玩什么"要有真实会话才谈得上,
+              在「运行状态」页看。
+            </InfoTip>
+          </div>
           <p className="mt-0.5 text-xs text-ink-faint">
             {data ? `${data.length} 个能力 · ${apps} 个应用` : ''}
           </p>
@@ -50,15 +61,14 @@ function Body() {
       {loading && !data && <Empty>读取中…</Empty>}
 
       {data && data.length === 0 && (
-        <Panel title="应用平台">
+        <Panel title="平台能力">
           <Empty>
-            应用平台现在没有登记任何能力。
+            平台现在没有登记任何能力。
+            <span className="mt-1 block text-[11px] leading-relaxed">
+              这句空话在「真的没登记」与「连不上聊天平台」两种情况下长得一模一样 ——
+              想确认后端通不通, 到「系统设置」页看那几行检查结果。
+            </span>
           </Empty>
-          <p className="mt-2 text-center text-xs leading-relaxed text-ink-faint">
-            这句话在"平台真的没登记"与"聊天平台连不上"两种情况下**字面相同** ——
-            本页拿不到连接层的错误, 所以它只说它知道的那件事。
-            想确认后端通不通, 到 System 页看探活。
-          </p>
         </Panel>
       )}
 

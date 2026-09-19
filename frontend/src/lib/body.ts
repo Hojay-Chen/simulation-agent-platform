@@ -83,7 +83,7 @@ export const VITALS: readonly Vital[] = [
   { key: 'mood', label: '整体心情', group: 'emotion', goodHigh: true, hint: '上面那些情绪的合成底色。' },
 
   // ── 心智余量 ──
-  { key: 'focus', label: '专注', group: 'mind', goodHigh: true, hint: '**注意力的实际输入**。它高的时候, 一条普通消息连"隐约感到"都到不了。' },
+  { key: 'focus', label: '专注', group: 'mind', goodHigh: true, hint: '注意力的实际输入。它高的时候, 一条普通消息连"隐约感到"都到不了。' },
   { key: 'curiosity', label: '好奇', group: 'mind', goodHigh: true, hint: '影响她会不会主动发起一件事(而不是只被动回应)。' },
   { key: 'socialEnergy', label: '社交电量', group: 'mind', goodHigh: true, hint: '低的时候她会选独处 —— 表现为消息被推迟。' },
 ]
@@ -190,7 +190,7 @@ export function describeReading(r: VitalReading): string {
  */
 export const SENSE_CHANNELS = [
   { key: 'hearing', label: '听觉', via: '手机通知音量 / 铃声 / 闹钟', hint: 'B 类事件最主要的入口。' },
-  { key: 'vision', label: '视觉', via: '她看向屏幕或窗外', hint: '只有她**主动去看**的时候才有输入 —— 这正是消息正文进入她的唯一路径。' },
+  { key: 'vision', label: '视觉', via: '她看向屏幕或窗外', hint: '只有她主动去看的时候才有输入 —— 这正是消息正文进入她的唯一路径。' },
   { key: 'smell', label: '嗅觉', via: '环境事件', hint: '坏气味是 B 类: 需要立刻反应, 且没法"待会儿再闻"。' },
   { key: 'taste', label: '味觉', via: '进食', hint: '与饥饿、进食活动耦合。' },
   { key: 'touch', label: '触觉', via: '温度 / 衣物 / 身体不适', hint: 'A 类持续影响的主要落点 —— 冷会一直拉着 warmth 往下走。' },

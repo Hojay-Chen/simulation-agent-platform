@@ -1,13 +1,19 @@
 import { Panel } from '@/components/ui'
 
 /**
- * 接口文档 —— 给"拿着钥匙站在门外的那个人"看的。
+ * 「接入说明」—— 给"拿着钥匙站在门外的那个人"看的。
  *
  * <h2>为什么写在这一页, 而不是丢一个 Swagger 链接</h2>
  *
  * 8092 确实有 OpenAPI 描述(`/v3/api-docs`), 但那是**机器**读的: 它列得出字段, 说不清
  * "哪把钥匙开哪张门""ownerUserId 为什么会被 403"。第三方接入时卡住的地方从来不是
- * 字段名, 是这几句话。所以这一页只写那几句话 + 三个能直接粘的 curl。
+ * 字段名, 是这几句话。所以这一页只写那几句话 + 三段落地的 curl。
+ *
+ * <h2>它的正文**不搬进问号**</h2>
+ *
+ * 全站都在把说明往问号里挪, 这一页是唯一的例外 —— 它本身就是那份说明。把一份文档
+ * 藏进 tooltip, 等于让人"把鼠标停在问题上方才知道问题是什么"。这里只动标题与措辞:
+ * 「基址」「端点」「代建」这些词换成用户看得懂的说法, 正文照旧。
  *
  * <h2>它只写对外承诺的那一张面</h2>
  *
@@ -17,40 +23,40 @@ import { Panel } from '@/components/ui'
 export function Docs() {
   return (
     <div className="space-y-5">
-      <Panel title="基址与两张钥匙面">
-        <p className="text-sm leading-relaxed text-ink-soft">
-          开放面只有一张:<span className="mx-1 font-mono text-ink">/api/v1/openapi/**</span>
+      <Panel title="接口地址与两把钥匙">
+        <p className="text-pretty text-sm leading-relaxed text-ink-soft">
+          对外的接口只有一处:<span className="mx-1 font-mono text-ink">/api/v1/openapi/**</span>
           (server:8092)。它有两把钥匙, 分别对应下面两栏 ——
-          <strong className="text-ink">它们互不相通</strong>: 拿管理钥去打客户端面, 或反过来,
-          都是 401。
+          <strong className="text-ink">它们互不相通</strong>: 拿管理钥去打客户端那一面,
+          或反过来, 都是 401。
         </p>
         <div className="mt-4 grid gap-3 sm:grid-cols-2">
           <FaceCard
-            title="管理面"
-            header="X-Admin-Key: <管理密钥>"
+            title="管理钥"
+            header="X-Admin-Key: <管理钥>"
             who="平台运维"
-            what="发放、列出、吊销 API 客户端; 开关某个客户端的代建权限。"
+            what="发放、列出、吊销客户端; 开关某个客户端的代建权限。"
             note="服务端未配置 OPENAPI_ADMIN_KEY 时, 这一面整体回 503(不是 401)。"
           />
           <FaceCard
-            title="客户端面"
+            title="客户端钥"
             header="Authorization: Bearer sap_…"
             who="任何一个程序"
-            what="建 / 列 / 读 / 改人格 / 软删 agent, 读实时状态。"
+            what="建 / 列 / 读 / 改人格 / 软删数字人, 读它的实时状态。"
             note="明文钥匙只在创建响应里出现一次 —— 库里只有 sha256, 丢了只能吊销重建。"
           />
         </div>
       </Panel>
 
-      <Panel title="端点">
+      <Panel title="能做哪些操作">
         <div className="overflow-x-auto">
           <table className="w-full min-w-[640px] text-left text-sm">
             <thead>
-              <tr className="border-b border-line text-xs uppercase tracking-wider text-ink-faint">
-                <th className="py-2 pr-4 font-normal">方法</th>
-                <th className="py-2 pr-4 font-normal">路径</th>
-                <th className="py-2 pr-4 font-normal">面</th>
-                <th className="py-2 font-normal">说明</th>
+              <tr className="border-b border-line text-xs tracking-wide text-ink-faint">
+                <th scope="col" className="py-2 pr-4 font-normal">方法</th>
+                <th scope="col" className="py-2 pr-4 font-normal">路径</th>
+                <th scope="col" className="py-2 pr-4 font-normal">用哪把钥匙</th>
+                <th scope="col" className="py-2 font-normal">做什么</th>
               </tr>
             </thead>
             <tbody className="text-ink-soft">
@@ -65,24 +71,24 @@ export function Docs() {
             </tbody>
           </table>
         </div>
-        <p className="mt-4 text-xs leading-relaxed text-ink-faint">
+        <p className="mt-4 text-pretty text-xs leading-relaxed text-ink-faint">
           <span className="font-mono text-ink-soft">GET /api/health</span> 不需要任何钥匙 ——
-          探活不该依赖钥匙是否有效, 否则"服务活着吗"会变成"我的钥匙还有效吗"。
+          探活不该依赖钥匙是否有效, 否则「服务活着吗」会变成「我的钥匙还有效吗」。
         </p>
       </Panel>
 
-      <Panel title="三个能直接粘的例子">
+      <Panel title="三步接入示例">
         <Step
           n={1}
           title="用管理钥发一个客户端"
           body={`curl -s -X POST https://being.luxera.top/api/v1/openapi/clients \\
-  -H 'X-Admin-Key: <管理密钥>' -H 'Content-Type: application/json' \\
+  -H 'X-Admin-Key: <管理钥>' -H 'Content-Type: application/json' \\
   -d '{"name":"my-agent-producer"}'`}
           after="响应里的 apiKey 就是 sap_… 明文, 只在这里出现一次。"
         />
         <Step
           n={2}
-          title="用客户端钥建一个 agent"
+          title="用客户端钥建一个数字人"
           body={`curl -s -X POST https://being.luxera.top/api/v1/openapi/agents \\
   -H 'Authorization: Bearer sap_…' -H 'Content-Type: application/json' \\
   -d '{"description":"一位喜欢在下午读书的安静的人。","relationshipType":"friend"}'`}
@@ -93,14 +99,15 @@ export function Docs() {
           title="读它的实时状态"
           body={`curl -s https://being.luxera.top/api/v1/openapi/agents/<agentId>/state \\
   -H 'Authorization: Bearer sap_…'`}
-          after="状态由认知链持续写入。**它收到第一条消息之前是空的** —— 空状态不是错误。"
+          after="状态由认知链持续写入。它收到第一条消息之前是空的 —— 空状态不是错误。"
         />
       </Panel>
 
-      <Panel title="代建: 把 agent 放进某个真人的名下">
-        <p className="text-sm leading-relaxed text-ink-soft">
-          默认情况下, 一个客户端建出来的 agent 归**它自己**(`user_id = clientId`)—— 这是给
-          纯程序场景的。若要让 agent 出现在某个真人名下(比如聊天平台的「一键创建 agent 好友」),
+      <Panel title="让数字人归到某个真人名下">
+        <p className="text-pretty text-sm leading-relaxed text-ink-soft">
+          默认情况下, 一个客户端建出来的数字人归<b className="text-ink">它自己</b>
+          (<span className="font-mono">user_id = clientId</span>)—— 这是给纯程序场景的。
+          若要让数字人出现在某个真人名下(比如聊天平台的「一键创建 agent 好友」),
           创建时带上
           <span className="mx-1 font-mono text-ink">ownerUserId</span>
           与
@@ -109,24 +116,26 @@ export function Docs() {
         </p>
         <pre className="mt-3 overflow-x-auto rounded-lg border border-line bg-sunken/60 p-3 font-mono text-xs leading-relaxed text-ink-soft">
 {`curl -s -X PUT https://being.luxera.top/api/v1/openapi/clients/<clientId>/can-act-for-users \\
-  -H 'X-Admin-Key: <管理密钥>' -H 'Content-Type: application/json' \\
+  -H 'X-Admin-Key: <管理钥>' -H 'Content-Type: application/json' \\
   -d '{"canActForUsers":true}'`}
         </pre>
-        <p className="mt-3 text-xs leading-relaxed text-ink-faint">
+        <p className="mt-3 text-pretty text-xs leading-relaxed text-ink-faint">
           没有这道闸, 任何持 <span className="font-mono">sap_</span> 钥匙的程序都能往任意真人的
-          通讯录里塞一个归他所有、他却删不掉的 agent。所以它默认关闭、且是一个**可收回**的开关
-          (收回不必换钥, 也不影响已经代建出来的 agent —— 那些 agent 属于真人, 归属不由这个开关决定)。
+          通讯录里塞一个归他所有、他却删不掉的数字人。所以它默认关闭、且是一个
+          <b className="text-ink-soft">可收回</b>的开关
+          (收回不必换钥, 也不影响已经代建出来的数字人 —— 那些数字人属于真人,
+          归属不由这个开关决定)。
           <br />
           未标记可信却传了 <span className="font-mono">ownerUserId</span> 的请求, 得到的是
           <span className="mx-1 font-mono">403</span>而不是静默忽略。
         </p>
       </Panel>
 
-      <Panel title="边界: 开放面不做什么">
-        <ul className="list-disc space-y-2 pl-5 text-sm leading-relaxed text-ink-soft">
+      <Panel title="开放面不做什么">
+        <ul className="list-disc space-y-2 pl-5 text-pretty text-sm leading-relaxed text-ink-soft">
           <li>
             <strong className="text-ink">不提供聊天能力。</strong>
-            发消息、读会话、加好友是**聊天平台**的开放面, 不在这里。两个平台各自开放各自的,
+            发消息、读会话、加好友是<b>聊天平台</b>的开放面, 不在这里。两个平台各自开放各自的,
             互相之间只通过接口往来 —— 这一条是两个平台"完全独立"最直接的体现。
           </li>
           <li>
@@ -188,15 +197,15 @@ function Step({ n, title, body, after }: {
 }
 
 const ENDPOINTS = [
-  { method: 'POST', path: '/api/v1/openapi/clients', face: '管理', note: '发一个客户端, 返回明文 sap_ 钥匙(仅此一次)' },
-  { method: 'GET', path: '/api/v1/openapi/clients', face: '管理', note: '列出客户端 —— 响应里不含 apiKey' },
-  { method: 'DELETE', path: '/api/v1/openapi/clients/{clientId}', face: '管理', note: '吊销客户端, 其名下 agent 保留' },
-  { method: 'PUT', path: '/api/v1/openapi/clients/{clientId}/can-act-for-users', face: '管理', note: '开关代建权限' },
-  { method: 'POST', path: '/api/v1/openapi/agents', face: '客户端', note: '建 agent: description 走人格编译, 或直接传 persona' },
-  { method: 'GET', path: '/api/v1/openapi/agents', face: '客户端', note: '列出本客户端可见的 agent' },
-  { method: 'GET', path: '/api/v1/openapi/agents/{agentId}', face: '客户端', note: '单个 agent(含当前人格)' },
-  { method: 'PUT', path: '/api/v1/openapi/agents/{agentId}/persona', face: '客户端', note: '重编译人格, 落一个新版本' },
-  { method: 'DELETE', path: '/api/v1/openapi/agents/{agentId}', face: '客户端', note: '软删' },
-  { method: 'GET', path: '/api/v1/openapi/agents/{agentId}/state', face: '客户端', note: '实时状态(情绪/亲密度/困倦度)' },
-  { method: 'GET', path: '/api/health', face: '无', note: '探活, 不需要钥匙' },
+  { method: 'POST', path: '/api/v1/openapi/clients', face: '管理钥', note: '发一个客户端, 返回明文 sap_ 钥匙(仅此一次)' },
+  { method: 'GET', path: '/api/v1/openapi/clients', face: '管理钥', note: '列出客户端 —— 响应里不含 apiKey' },
+  { method: 'DELETE', path: '/api/v1/openapi/clients/{clientId}', face: '管理钥', note: '吊销客户端, 其名下数字人保留' },
+  { method: 'PUT', path: '/api/v1/openapi/clients/{clientId}/can-act-for-users', face: '管理钥', note: '开关代建权限' },
+  { method: 'POST', path: '/api/v1/openapi/agents', face: '客户端钥', note: '建数字人: description 走人格编译, 或直接传 persona' },
+  { method: 'GET', path: '/api/v1/openapi/agents', face: '客户端钥', note: '列出本客户端可见的数字人' },
+  { method: 'GET', path: '/api/v1/openapi/agents/{agentId}', face: '客户端钥', note: '单个数字人(含当前人格)' },
+  { method: 'PUT', path: '/api/v1/openapi/agents/{agentId}/persona', face: '客户端钥', note: '重编译人格, 落一个新版本' },
+  { method: 'DELETE', path: '/api/v1/openapi/agents/{agentId}', face: '客户端钥', note: '软删' },
+  { method: 'GET', path: '/api/v1/openapi/agents/{agentId}/state', face: '客户端钥', note: '实时状态(情绪/亲密度/困倦度)' },
+  { method: 'GET', path: '/api/health', face: '不需要', note: '探活, 不需要钥匙' },
 ] as const

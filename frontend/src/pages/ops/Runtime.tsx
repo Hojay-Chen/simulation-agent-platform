@@ -14,12 +14,12 @@ import { useAsync } from '@/lib/useAsync'
 import { AgentPickerBar, useAgentChoice } from '@/components/AgentPicker'
 import { RequireStudio } from '@/components/StudioLogin'
 import { RecordView } from '@/components/RecordView'
-import { Button, Chip, Empty, Panel } from '@/components/ui'
+import { Button, Chip, Empty, InfoTip, Panel } from '@/components/ui'
 import { describeError } from '@/components/Section'
 import { GapNote } from '@/components/viz/panels'
 
 /**
- * 「运行时」—— 运维面。这一页回答的是"它现在跑成什么样", 不是"她过得好不好"。
+ * 「运行状态」—— 运维面。这一页回答的是"它现在跑成什么样", 不是"她过得好不好"。
  *
  * <h2>这一页允许丑</h2>
  *
@@ -27,6 +27,9 @@ import { GapNote } from '@/components/viz/panels'
  * 认知指标、轨迹、排程、注册的处理器、V11 的影子对比。它们的字段名是给排查用的,
  * 不是给人读的 —— 把它们"美化"成中文标题之后, 用户在日志里看到的名字就和屏幕上
  * 对不上号了。所以这一页用同一个 `RecordView`, 只在**块与块之间**加解释。
+ *
+ * <p>而"块与块之间的解释"原来是每一块面板标题下的一行灰字, 六块就是六行。现在它们
+ * 各自挂在那一块标题的问号上 —— 排查的人手里是数据, 第一次来的人点得到说明书。
  *
  * <h2>唯一一处能看到消息正文的地方</h2>
  *
@@ -39,6 +42,9 @@ import { GapNote } from '@/components/viz/panels'
  * 打开, "正文只在她主动去看的时候才进入她"这句话就不成立了 —— 而那是整个产品唯一
  * 一条不能破的规则。这一页归运维组, 就是这条边界的**实现方式**。
  *
+ * <p>那一行警示条**留在版面上**没有搬进问号: 它讲的是"你接下来会看到正文", 属于
+ * 读之前必须知道的事。详细的理由挂在它自己的问号上。
+ *
  * <h2>V11 影子那一块为什么要单独说一句"读到 0 不等于没分歧"</h2>
  *
  * 因为那个端点在没启用影子对比时会返回一组全 0 的数, 并塞一句 `note`。全 0 在界面上
@@ -47,7 +53,7 @@ import { GapNote } from '@/components/viz/panels'
  */
 export function Runtime() {
   return (
-    <RequireStudio why="运行时数据(认知指标 / 轨迹 / 排程 / 影子对比)只在 server:8091 上 —— 需要先用你的账号登录。">
+    <RequireStudio why="运行状态是认知链的内部数据(指标、轨迹、排程、降级对比), 属于个人数据。">
       <Body />
     </RequireStudio>
   )
@@ -83,10 +89,18 @@ function Body() {
     <div className="space-y-5">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0">
-          <h1 className="text-base font-medium text-ink">运行时</h1>
-          <p className="mt-1 max-w-2xl text-xs leading-relaxed text-ink-faint">
-            认知链的计数、轨迹、排程与降级。这一页是**运维面** —— 字段名照抄后端,
-            不做美化, 以便和日志、接口文档、数据库对得上号。
+          <div className="flex min-w-0 items-center gap-1.5">
+            <h1 className="text-base font-medium text-ink">运行状态</h1>
+            <InfoTip label="「运行状态」这一页给谁看">
+              认知链的计数、轨迹、排程与降级 —— 这一页是<b className="font-medium text-ink">运维面</b>。
+              <br />
+              <br />
+              字段名照抄后端、不做美化: 你在日志、接口文档、数据库里看到的是同一批名字。
+              "她过得好不好"不在这里, 在她那一侧的「数字人」里。
+            </InfoTip>
+          </div>
+          <p className="mt-1 max-w-2xl text-pretty text-xs leading-relaxed text-ink-faint">
+            认知链跑成什么样: 计数、轨迹、排程、降级。
           </p>
         </div>
         <span className="flex items-center gap-2">
@@ -103,7 +117,7 @@ function Body() {
         onReload={reloadAgents}
         right={registered.data && (
           <span className="text-xs text-ink-faint">
-            注册的处理器 <span className="font-mono text-ink tnum">{registered.data.registered.length}</span>
+            已注册的处理器 <span className="font-mono text-ink tnum">{registered.data.registered.length}</span>
           </span>
         )}
       />
@@ -114,13 +128,17 @@ function Body() {
 
           <div className="grid gap-5 lg:grid-cols-2">
             <Panel
-              title="认知指标"
+              title={
+                <div className="flex min-w-0 items-center gap-1.5">
+                  <h2 className="text-sm font-medium tracking-wide text-ink">认知链的计数</h2>
+                  <InfoTip label="这块数是什么">
+                    认知链自己的计数器(轮次、模型调用、命中率、耗时)。它是"这个数字人花了多少"
+                    的<b className="font-medium text-ink">唯一</b>来源 —— 别处没有第二个数可以拿来对。
+                  </InfoTip>
+                </div>
+              }
               action={<Button variant="ghost" onClick={metrics.reload}><RefreshCw size={13} />刷新</Button>}
             >
-              <p className="mb-4 text-xs leading-relaxed text-ink-faint">
-                认知链自己的计数器(轮次、模型调用、命中率、耗时)。它是"这个 agent
-                花了多少"的**唯一**来源 —— 别处没有第二个数可以拿来对。
-              </p>
               {metrics.error && <p className="text-sm text-danger">{describeError(metrics.error)}</p>}
               {metrics.data && <RecordView value={metrics.data} empty="还没有指标 —— 它要跑过至少一轮认知。" />}
             </Panel>
@@ -139,11 +157,11 @@ function Body() {
               {wakeups.data && wakeups.data.length === 0 && (
                 <Empty>
                   她没在等任何时刻。
-                  <span className="mt-1 block text-[11px] leading-relaxed">
-                    空列表在这里是**正常的**: 闹钟只被她自己排下 —— 一个意图到点、
-                    一条未了的事、一段沉默太久、计划表里"到了点要触发"的某件事。
-                    她今天可能一件都没有。
-                  </span>
+                  <InfoTip label="空列表意味着什么">
+                    空列表在这里是<b className="font-medium text-ink">正常的</b>: 闹钟只被她
+                    自己排下 —— 一个意图到点、一条未了的事、一段沉默太久、计划表里"到了点要触发"
+                    的某件事。她今天可能一件都没有。
+                  </InfoTip>
                 </Empty>
               )}
               {wakeups.data && wakeups.data.length > 0 && (
@@ -173,15 +191,23 @@ function Body() {
             </Panel>
           </div>
 
-          <Panel title="认知链上真正在跑的处理器">
-            <p className="mb-4 text-xs leading-relaxed text-ink-faint">
-              这一组名字是**运行时注册**的, 不是编译期的一张清单 —— 所以它是"这个 agent
-              现在装了哪些能力"的权威答案。少一个往往就意味着某条链路整个不工作,
-              而它在别处的表现只是一条事件没有反应。
-            </p>
+          <Panel
+            title={
+              <div className="flex min-w-0 items-center gap-1.5">
+                <h2 className="text-sm font-medium tracking-wide text-ink">已注册的处理器</h2>
+                <InfoTip label="「处理器」是什么">
+                  这一组名字是<b className="font-medium text-ink">运行时注册</b>的, 不是编译期的
+                  一张清单 —— 所以它是"这个数字人现在装了哪些能力"的权威答案。
+                  <br />
+                  <br />
+                  少一个往往就意味着某条链路整个不工作, 而它在别处的表现只是"一条事件没有反应"。
+                </InfoTip>
+              </div>
+            }
+          >
             {registered.error && <p className="text-sm text-danger">{describeError(registered.error)}</p>}
             {registered.data && registered.data.registered.length === 0 && (
-              <Empty>没有注册任何处理器 —— 这个 agent 的认知链是空的。</Empty>
+              <Empty>没有注册任何处理器 —— 这个数字人的认知链是空的。</Empty>
             )}
             {registered.data && registered.data.registered.length > 0 && (
               <ul className="flex flex-wrap gap-1.5">
@@ -201,27 +227,35 @@ function Body() {
 
       <Panel title="这一页读不到什么">
         <div className="grid gap-3 lg:grid-cols-2">
-          <GapNote title="降级没有单独的读数">
-            <p>
-              V2.2 §8 的 LLM 降级(Mock 回退)目前只能从指标里**间接**看出来 ——
-              调用数对不上、耗时异常短, 都是间接证据。
-            </p>
-            <p>
-              缺的端点: <code>GET /api/companions/{'{id}'}/v9/degradation</code>,
-              返回"最近 N 次调用里有多少次落到了 Mock、分别是什么原因"。
-            </p>
-          </GapNote>
-          <GapNote title="进程内的账本读不到">
-            <p>
-              这一页显示的三块(排程 / 待处理消息 / 影子)都是从**持久化**的那一侧读的。
-              而 `ContinuousEffectLedger` 与 `RealtimeEventQueue`(`boundary/event/*`
-              那两个 fabric)是**进程内**的 —— 重启即重建, 没有任何读取面。
-            </p>
-            <p>
-              所以"她此刻的刺激队列里排着什么"这个问题, 界面上答不了。这在排查
-              "她怎么对这个通知没反应"时是最需要的那一条信息。
-            </p>
-          </GapNote>
+          <GapNote
+            title="降级没有单独的读数"
+            tip={
+              <>
+                V2.2 §8 的 LLM 降级(Mock 回退)目前只能从指标里间接看出来 —— 调用数对不上、
+                耗时异常短, 都是间接证据。
+                <br />
+                <br />
+                缺的端点: <span className="font-mono">GET /api/companions/{'{id}'}/v9/degradation</span>,
+                返回"最近 N 次调用里有多少次落到了 Mock、分别是什么原因"。
+              </>
+            }
+          />
+          <GapNote
+            title="进程内的账本读不到"
+            tip={
+              <>
+                这一页显示的三块(排程 / 待处理消息 / 影子)都是从持久化的那一侧读的。而
+                <span className="font-mono"> ContinuousEffectLedger </span>与
+                <span className="font-mono"> RealtimeEventQueue </span>
+                (<span className="font-mono">boundary/event/*</span> 那两个 fabric)是进程内的 ——
+                重启即重建, 没有任何读取面。
+                <br />
+                <br />
+                所以"她此刻的刺激队列里排着什么"这个问题, 界面上答不了。这在排查
+                "她怎么对这个通知没反应"时是最需要的那一条信息。
+              </>
+            }
+          />
         </div>
       </Panel>
     </div>
@@ -236,14 +270,17 @@ function ShadowPanel({ state }: { state: ReturnType<typeof useAsync<V11ShadowVie
 
   return (
     <Panel
-      title="V11 送达主链的影子对比"
+      title={
+        <div className="flex min-w-0 items-center gap-1.5">
+          <h2 className="text-sm font-medium tracking-wide text-ink">新旧主链有没有分歧</h2>
+          <InfoTip label="这块数是什么">
+            V11 的新主链在没有正式切流之前, 会<b className="font-medium text-ink">同时</b>跑一遍
+            旧的判定, 把两次结果的分歧记下来。这一块就是那份分歧账 —— 它是"能不能切"的唯一依据。
+          </InfoTip>
+        </div>
+      }
       action={<Button variant="ghost" onClick={state.reload}><RefreshCw size={13} />刷新</Button>}
     >
-      <p className="mb-4 text-xs leading-relaxed text-ink-faint">
-        新主链在没有正式切流之前, 会**同时**跑一遍旧的判定, 把两次结果的分歧记下来。
-        这一块就是那份分歧账 —— 它是"能不能切"的唯一依据。
-      </p>
-
       {state.error && <p className="text-sm text-danger">{describeError(state.error)}</p>}
       {state.loading && !d && <Empty>读取中…</Empty>}
 
@@ -260,19 +297,25 @@ function ShadowPanel({ state }: { state: ReturnType<typeof useAsync<V11ShadowVie
 
           {d.overall && (
             <section>
-              <p className="mb-1.5 text-xs uppercase tracking-wider text-ink-faint">overall(全平台口径)</p>
+              <p className="mb-1.5 text-xs text-ink-faint">
+                <span className="font-mono">overall</span> · 全平台口径
+              </p>
               <RecordView value={d.overall} empty="空。" />
             </section>
           )}
           {d.thisCompanion && (
             <section>
-              <p className="mb-1.5 text-xs uppercase tracking-wider text-ink-faint">thisCompanion(只算她)</p>
+              <p className="mb-1.5 text-xs text-ink-faint">
+                <span className="font-mono">thisCompanion</span> · 只算她
+              </p>
               <RecordView value={d.thisCompanion} empty="空。" />
             </section>
           )}
           {d.recent && d.recent.length > 0 && (
             <section>
-              <p className="mb-1.5 text-xs uppercase tracking-wider text-ink-faint">recent({d.recent.length})</p>
+              <p className="mb-1.5 text-xs text-ink-faint">
+                <span className="font-mono">recent</span> · 最近 {d.recent.length} 条
+              </p>
               <RecordView value={d.recent} empty="空。" />
             </section>
           )}
@@ -322,18 +365,29 @@ function PendingPanel({ agentId }: { agentId: string }) {
 
   return (
     <Panel
-      title="她决定待会儿再看"
+      title={
+        <div className="flex min-w-0 items-center gap-1.5">
+          <h2 className="text-sm font-medium text-ink">她推迟回的消息</h2>
+          <InfoTip label="「她推迟回的消息」是什么">
+            她已经看过、但当时决定"待会儿再回"的那些消息。每一条都带一个
+            <b className="font-medium text-ink">摩擦类型</b>: 它说的不是她有多忙, 而是
+            <b className="font-medium text-ink">卡在哪一步</b> —— 处置完全不同。
+          </InfoTip>
+        </div>
+      }
       action={<Button variant="ghost" onClick={pending.reload}><RefreshCw size={13} />刷新</Button>}
     >
       <div className="mb-4 flex items-start gap-2 rounded-lg border border-warn/40 bg-warn/10 px-3 py-2">
         <AlertTriangle size={14} className="mt-0.5 shrink-0 text-warn" />
-        <p className="text-[11px] leading-relaxed text-warn">
-          这一块**含消息正文**, 而它是整个控制台里唯一一处。理由是具体的: 存进来的
-          就是她自己已经看过、并决定推迟的那一条, 所以它不是泄漏。
-          <span className="mt-1 block text-ink-faint">
-            它只能出现在运维面。她那一侧的每一页都不许渲染这个字段 ——
-            那条路一旦打开, "正文只在她主动去看的时候才进入她"就不成立了。
-          </span>
+        <p className="flex flex-wrap items-center gap-1.5 text-[11px] leading-relaxed text-warn">
+          <span>这一块含消息正文 —— 整个控制台里唯一一处。</span>
+          <InfoTip tone="warn" label="为什么这里能显示正文">
+            理由是具体的: 存进来的就是她自己已经看过、并决定推迟的那一条, 所以它不是泄漏。
+            <br />
+            <br />
+            它只能出现在运维面。她那一侧的每一页都不许渲染这个字段 —— 那条路一旦打开,
+            "正文只在她主动去看的时候才进入她"就不成立了。
+          </InfoTip>
         </p>
       </div>
 
@@ -342,14 +396,16 @@ function PendingPanel({ agentId }: { agentId: string }) {
       {pending.data && pending.data.length === 0 && (
         <Empty>
           没有推后的消息。
-          <span className="mt-1 block text-[11px] leading-relaxed">
-            注意"推后"和"没理会"是两件事: 前者在这张表里, 后者**不在这里** ——
-            她压根没感知到的消息不会产生一条待办。
-          </span>
-          <span className="mt-1 block text-[11px] leading-relaxed">
-            这条队列**有终点**: 复查到上限她还没回, 这一条就变成"她忘了"并离开这里。
-            所以"列表变短"既可能是她回了, 也可能是她放下了 —— 两者在别处(对话与轨迹)分得清。
-          </span>
+          <InfoTip label="「没有推后的消息」意味着什么">
+            "推后"和"没理会"是两件事: 前者在这张表里, 后者
+            <b className="font-medium text-ink">不在这里</b> —— 她压根没感知到的消息不会产生
+            一条待办。
+            <br />
+            <br />
+            这条队列<b className="font-medium text-ink">有终点</b>: 复查到上限她还没回, 这一条
+            就变成"她忘了"并离开这里。所以"列表变短"既可能是她回了, 也可能是她放下了 ——
+            两者在别处(对话与轨迹)分得清。
+          </InfoTip>
         </Empty>
       )}
 
@@ -430,21 +486,26 @@ function TracesPanel({
   const rows = state.data ?? []
   return (
     <Panel
-      title={`认知轨迹 (${rows.length})`}
+      title={
+        <div className="flex min-w-0 items-center gap-1.5">
+          <h2 className="text-sm font-medium text-ink">认知轨迹 ({rows.length})</h2>
+          <InfoTip label="「认知轨迹」是什么">
+            一条轨迹 = 一次认知的完整过程。它是"她为什么这么反应"的
+            <b className="font-medium text-ink">唯一</b>可复查记录 —— 上面那些计数说
+            "跑了几轮", 这里说"每一轮想了什么"。
+          </InfoTip>
+        </div>
+      }
       action={<Button variant="ghost" onClick={state.reload}><RefreshCw size={13} />刷新</Button>}
     >
-      <p className="mb-4 text-xs leading-relaxed text-ink-faint">
-        一条轨迹 = 一次认知的完整过程。它是"她为什么这么反应"的**唯一**可复查记录 ——
-        上面那些计数说"跑了几轮", 这里说"每一轮想了什么"。
-      </p>
       {state.error && <p className="text-sm text-danger">{describeError(state.error)}</p>}
       {state.loading && state.data === null && <Empty>读取中…</Empty>}
       {state.data && rows.length === 0 && (
         <Empty>
           还没有轨迹。
-          <span className="mt-1 block text-[11px] leading-relaxed">
+          <InfoTip label="轨迹什么时候才会出现">
             她收到第一条消息、或第一次被定时任务叫醒之后才会出现。
-          </span>
+          </InfoTip>
         </Empty>
       )}
       {rows.length > 0 && (
@@ -457,9 +518,9 @@ function TracesPanel({
         </ul>
       )}
       {rows.length > 0 && (
-        <p className="mt-2 text-[11px] text-ink-faint">
-          这一块是 agent <span className="font-mono">{agentId}</span> 的轨迹 —— 跨 agent
-          的轨迹检索需要另一个端点(见本页缺口)。
+        <p className="mt-2 text-pretty text-[11px] text-ink-faint">
+          只有数字人 <span className="font-mono">{agentId}</span> 的轨迹 —— 跨数字人检索
+          还没有端点(见本页缺口)。
         </p>
       )}
     </Panel>
@@ -494,7 +555,7 @@ export function shadowVerdict(v: V11ShadowView): ShadowVerdict {
     return {
       tone: 'unknown',
       text: v.note?.trim()
-        ? `影子对比**没有在跑**: ${v.note}`
+        ? `影子对比没有在跑: ${v.note}`
         : '影子对比没有在跑(或服务端没说它在跑)—— 下面的数全是 0, 但那表示「没测」, 不表示「没有分歧」。',
     }
   }

@@ -1,4 +1,5 @@
 import type { ReactNode } from 'react'
+import { InfoTip } from '@/components/ui'
 import {
   TONE_META,
   fmtClock,
@@ -305,8 +306,16 @@ export function UnscheduledRows<T>({
   if (items.length === 0) return null
   return (
     <div className="rounded-lg border border-line bg-sunken/40 p-3">
-      <p className="mb-2 text-xs text-ink-faint">
-        下面这些没有开始/结束时间, 排不到轨道上 —— 它们没有"第几行第几列"可言。
+      <p className="mb-2 flex items-center gap-1.5 text-xs font-medium text-ink-soft">
+        <span>没排上时间的 ({items.length})</span>
+        <InfoTip label="「没排上时间的」是什么">
+          它们没有开始 / 结束时间, 所以排不到轨道上 —— 一个没有起止时间的东西放上时间轴,
+          位置就是编的。
+          <br />
+          <br />
+          后端给不出时间, 要么是它还没被排期, 要么是数据有问题。两种都要被看见, 但都不该被
+          伪装成"她 3 点做这个"。
+        </InfoTip>
       </p>
       <ul className="space-y-1">
         {items.map((it) => (

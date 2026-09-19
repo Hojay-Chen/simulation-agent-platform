@@ -73,7 +73,7 @@ function Node({ value, depth, empty }: { value: unknown; depth: number; empty: s
           <dl className="grid grid-cols-1 gap-x-6 gap-y-2 sm:grid-cols-2">
             {scalars.map((e) => (
               <div key={e.key} className="flex min-w-0 items-baseline gap-2">
-                <dt className="shrink-0 text-xs uppercase tracking-wider text-ink-faint">{e.label}</dt>
+                <dt className="shrink-0 text-xs tracking-wide text-ink-faint">{e.label}</dt>
                 <dd
                   className="min-w-0 flex-1 truncate text-sm text-ink"
                   title={String(e.value ?? '')}
@@ -86,9 +86,9 @@ function Node({ value, depth, empty }: { value: unknown; depth: number; empty: s
         )}
         {containers.map((e) => (
           <section key={e.key}>
-            <p className="mb-1.5 text-xs uppercase tracking-wider text-ink-faint">
+            <p className="mb-1.5 text-xs tracking-wide text-ink-faint">
               {e.label}
-              {Array.isArray(e.value) && <span className="ml-1.5 normal-case">({e.value.length})</span>}
+              {Array.isArray(e.value) && <span className="ml-1.5">({e.value.length})</span>}
             </p>
             {depth >= MAX_DEPTH
               ? (

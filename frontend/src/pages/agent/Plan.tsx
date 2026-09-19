@@ -19,7 +19,7 @@ import {
   type PlanSnapshotItem,
 } from '@/lib/plan'
 import { useAsync, useNow } from '@/lib/useAsync'
-import { Button, Empty, ErrorNote, Field, Panel, inputClass } from '@/components/ui'
+import { Button, Empty, ErrorNote, Field, InfoTip, Panel, inputClass } from '@/components/ui'
 import { describeError } from '@/components/Section'
 import { GapNote, PlanDiffTable } from '@/components/viz/panels'
 import { typeZh } from './Today'
@@ -109,7 +109,17 @@ export function Plan({ agentId }: { agentId: string }) {
     <div className="space-y-5">
       {/* ── 此刻 ─────────────────────────────────────────────── */}
       <Panel
-        title="现在的计划表"
+        title={
+          <div className="flex min-w-0 items-center gap-1.5">
+            <h2 className="text-sm font-medium text-ink">她今天的计划表</h2>
+            <InfoTip label="表里这几列是什么意思">
+              <b>可打断</b> —— 这件事有多容易被插进来的事推迟。数值越低, 越可能被推迟到之后,
+              而不是立刻处理。<br />
+              <b>进度</b> —— 她做到哪了。<br />
+              <b>状态</b> —— 她此刻与这件事的关系(正在做 / 做完了 / 还没到点)。
+            </InfoTip>
+          </div>
+        }
         action={<Button variant="ghost" onClick={() => { life.reload(); wakeups.reload() }}>
           <RefreshCw size={13} />刷新
         </Button>}
@@ -118,15 +128,20 @@ export function Plan({ agentId }: { agentId: string }) {
         {life.loading && !life.data && <Empty>读取中…</Empty>}
 
         {current && (
-          <p className="mb-4 text-xs leading-relaxed text-ink-soft">
-            按计划, 她此刻应该在
-            <b className="mx-1 text-ink">{current.title}</b>
-            ({fmtClock(current.plannedStart ?? null)}–{fmtClock(current.plannedEnd ?? null)})。
+          <p className="mb-4 flex flex-wrap items-center gap-x-1.5 text-xs leading-relaxed text-ink-soft">
+            <span>
+              按计划, 她此刻应该在
+              <b className="mx-1 text-ink">{current.title}</b>
+              ({fmtClock(current.plannedStart ?? null)}–{fmtClock(current.plannedEnd ?? null)})。
+            </span>
             {current.interruptibility && (
               <>
-                这件事的可打断程度是
-                <b className="mx-1 font-mono">{current.interruptibility}</b>
-                —— 数值越低, 插进去的事越可能被推迟到之后, 而不是立刻处理。
+                <span>
+                  这件事的可打断程度是 <b className="font-mono">{current.interruptibility}</b>。
+                </span>
+                <InfoTip label="可打断程度是什么意思">
+                  数值越低, 插进去的事越可能被推迟到之后, 而不是立刻处理。
+                </InfoTip>
               </>
             )}
           </p>
@@ -201,23 +216,27 @@ export function Plan({ agentId }: { agentId: string }) {
       </Panel>
 
       {/* ── 打断 ─────────────────────────────────────────────── */}
-      <Panel title="打断她: 改变计划表, 而不是暂停一件事">
-        <div className="space-y-4">
-          <div className="rounded-lg border border-line bg-sunken/40 px-4 py-3">
-            <p className="text-xs leading-relaxed text-ink-soft">
-              打断**不是**"记下剩余时长 → 插入新事件 → 按剩余时长接着走"。那会留下两个
-              真相源, 而且它假设了她一定会回来继续做 —— 但真实的人被打断之后可能就直接
-              把这件事从今天的表上划掉了。
-            </p>
-            <p className="mt-2 text-xs leading-relaxed text-ink-faint">
-              这里做的是: 把新情况告诉她, 让她**重新想一遍**, 产出一版新的计划表。改了什么
-              会在下面逐条列出来。
-            </p>
+      <Panel
+        title={
+          <div className="flex min-w-0 items-center gap-1.5">
+            <h2 className="text-sm font-medium text-ink">叫走她, 看她怎么重排</h2>
+            <InfoTip tone="warn" label="打断她之后会发生什么">
+              打断<b>不是</b>"记下剩余时长 → 插入新事件 → 按剩余时长接着走"。那样会留下两个真相源,
+              而且它假设了她一定会回来继续做 —— 但真实的人被打断之后, 可能直接把这件事从今天的表上划掉。
+              <br /><br />
+              这里做的是: 把新情况告诉她, 让她<b>重新想一遍</b>, 产出一版新的计划表。改了什么会在下面逐条列出来。
+            </InfoTip>
           </div>
-
+        }
+      >
+        <div className="space-y-4">
           <Field
-            label="为什么打扰她 (会写进她的因果链, 她之后能解释这件事)"
-            hint="留空会用默认那句「临时有事, 计划先放一放」。"
+            label="为什么打扰她"
+            hint={
+              <>
+                会写进她的因果链 —— 她之后能解释这件事。留空会用默认那句「临时有事, 计划先放一放」。
+              </>
+            }
           >
             <input
               className={inputClass}
@@ -230,7 +249,7 @@ export function Plan({ agentId }: { agentId: string }) {
 
           {sorted.length > 0 ? (
             <div className="flex flex-wrap items-center gap-2">
-              <span className="text-xs text-ink-faint">选一件事打断:</span>
+              <span className="text-xs text-ink-faint">把她从哪件事上叫走:</span>
               {sorted.map((a) => (
                 <Button
                   key={a.title}
@@ -256,32 +275,40 @@ export function Plan({ agentId }: { agentId: string }) {
       {/* ── 前后对照 ─────────────────────────────────────────── */}
       {rows && summary && (
         <Panel
-          title="这一次重新规划, 计划表怎么变的"
+          title={
+            <div className="flex min-w-0 items-center gap-1.5">
+              <h2 className="text-sm font-medium text-ink">这次打断改了什么</h2>
+              <InfoTip label="这份对照是怎么来的">
+                两端都是<b>本页自己抓的</b>: 打断请求发出前后各取一次
+                <span className="font-mono"> GET /life</span>。所以它只覆盖这一次动作,
+                而且它没有假装自己知道更多 —— 想回溯到任意一版计划, 需要服务端的版本链(见这一页底下那块说明)。
+              </InfoTip>
+            </div>
+          }
           action={<Button variant="ghost" onClick={() => { setBefore(null); setResult(null) }}>清掉对照</Button>}
         >
-          <p className="mb-3 text-sm text-ink">{summary.headline}</p>
+          <p className="mb-3 text-pretty text-sm text-ink">{summary.headline}</p>
           <PlanDiffTable rows={rows} />
-          <p className="mt-3 text-[11px] leading-relaxed text-ink-faint">
-            这份对照的两端是**本页自己抓的**: 打断请求发出前后各取一次
-            `GET /life`。它只覆盖这一次动作; 想回溯到任意一版计划, 需要服务端的
-            Revision 链(见下)。
-          </p>
         </Panel>
       )}
 
       <div className="grid gap-5 lg:grid-cols-2">
         {/* ── 闹钟 ───────────────────────────────────────────── */}
-        <Panel title="她排下的闹钟">
+        <Panel
+          title={
+            <div className="flex min-w-0 items-center gap-1.5">
+              <h2 className="text-sm font-medium text-ink">她定下的闹钟</h2>
+              <InfoTip label="闹钟是怎么来的">
+                闹钟只会被计划表里那些"到了点要触发"的事, 以及她自己排下的意图与未了的事填满 ——
+                所以她今天一件都没有也<b>很正常</b>。
+              </InfoTip>
+            </div>
+          }
+        >
           <ErrorNote error={wakeups.error ? describeError(wakeups.error) : null} />
           {wakeups.loading && !wakeups.data && <Empty>读取中…</Empty>}
           {wakeups.data && wakeups.data.length === 0 && (
-            <Empty>
-              她没在等任何时刻。
-              <span className="mt-1 block text-[11px] leading-relaxed">
-                一个空列表在这里是**正常的**: 闹钟只会被计划表里那些"到了点要触发"的事,
-                以及她自己排下的意图与未了的事填满 —— 而她今天可能一件都没有。
-              </span>
-            </Empty>
+            <Empty>她此刻没在等任何时刻。</Empty>
           )}
           {wakeups.data && wakeups.data.length > 0 && (
             <ul className="divide-y divide-line">
@@ -299,37 +326,41 @@ export function Plan({ agentId }: { agentId: string }) {
         </Panel>
 
         {/* ── 缺口 ───────────────────────────────────────────── */}
-        <Panel title="这一页读不到什么">
-          <div className="space-y-3">
-            <GapNote title="版本链没有读取面">
-              <p>
-                §3.5.5 的 `PlanBoard.revisionHistory` 是这次重做的核心承诺 ——
-                **每一版都不删除**, 所以可以回溯、可以重放、可以拿去做行为分析。
-                但它在 8091 上没有任何 HTTP 面。
-              </p>
-              <p>
-                缺的端点:
-                <code className="ml-1">GET /api/companions/{'{id}'}/plan/revisions</code>
-                与 <code>GET /api/companions/{'{id}'}/plan/revisions/{'{n}'}</code>。
-              </p>
-              <p>
-                它们落地之前, 这一页只能对照"刚才那一次", 看不到 `previousRevisionId`
-                串起来的那条链, 也看不到每次操作的 `PlanMutation` 类型。
-              </p>
-            </GapNote>
-            <GapNote title="打断的入参太薄">
-              <p>
-                现在只有 `title`(还是 `contains` 模糊匹配)和 `reason`。§3.5.6 里
-                那个例子真正需要的是"**把某件事插到最前面**"和"**把某件事的开始时间
-                设成另一件事的结束时间**" —— 这两种意图是目前这个接口表达不了的。
-              </p>
-              <p>
-                前端因此做了两件自保的事: 永远显式传 `title`(空串会打断列表里第一条),
-                并且永远在发出请求**之前**抓一份快照。
-              </p>
-            </GapNote>
-          </div>
-        </Panel>
+        <div className="flex items-start gap-2 rounded-xl border border-line bg-raised px-4 py-3">
+          <InfoTip tone="warn" label="这一页读不到的两样东西">
+            <div className="space-y-3">
+              <GapNote title="版本链没有读取面">
+                <p>
+                  §3.5.5 的 <span className="font-mono">PlanBoard.revisionHistory</span> 是这次重做的核心承诺 ——
+                  <b>每一版都不删除</b>, 所以可以回溯、可以重放、可以拿去做行为分析。
+                  但它在 8091 上没有任何 HTTP 面。
+                </p>
+                <p>
+                  缺的端点:
+                  <code className="ml-1">GET /api/companions/{'{id}'}/plan/revisions</code>
+                  与 <code>GET /api/companions/{'{id}'}/plan/revisions/{'{n}'}</code>。
+                </p>
+                <p>
+                  它们落地之前, 这一页只能对照"刚才那一次", 看不到 <span className="font-mono">previousRevisionId</span>
+                  串起来的那条链, 也看不到每次操作的 <span className="font-mono">PlanMutation</span> 类型。
+                </p>
+              </GapNote>
+              <GapNote title="打断的入参太薄">
+                <p>
+                  现在只有事项名(还是模糊匹配)和原因。真正需要的是"<b>把某件事插到最前面</b>"和
+                  "<b>把某件事的开始时间设成另一件事的结束时间</b>" —— 这两种意图是目前这个接口表达不了的。
+                </p>
+                <p>
+                  前端因此做了两件自保的事: 永远显式传事项名(空串会打断列表里第一条),
+                  并且永远在发出请求<b>之前</b>抓一份快照。
+                </p>
+              </GapNote>
+            </div>
+          </InfoTip>
+          <p className="text-xs leading-relaxed text-ink-soft">
+            这一页只能对照"刚才那一次" —— 计划的历史版本还读不到。
+          </p>
+        </div>
       </div>
     </div>
   )
@@ -343,9 +374,8 @@ function InterruptOutcome({ result }: { result: InterruptResult }) {
         <AlertTriangle size={14} className="mt-0.5 shrink-0 text-warn" />
         <p className="text-xs leading-relaxed text-warn">
           没打断成: {result.reason ?? '没有匹配的进行中计划。'}
-          <span className="mt-1 block text-ink-faint">
-            `title` 是模糊匹配。注意它匹配的是**进行中**的计划 ——
-            已经结束或还没开始的那些不在候选里。
+          <span className="mt-1 flex items-start gap-1.5 text-ink-soft">
+            事项名是模糊匹配, 而且只匹配<b>进行中</b>的计划 —— 已经结束或还没开始的都不在候选里。
           </span>
         </p>
       </div>
@@ -353,16 +383,17 @@ function InterruptOutcome({ result }: { result: InterruptResult }) {
   }
   return (
     <div className="space-y-2 rounded-lg border border-cat-schedule/40 bg-cat-schedule/10 px-4 py-3">
-      <p className="text-xs font-medium text-cat-schedule">
-        打断了「{result.title}」—— 下面是**她自己**对这件事的说法
+      <p className="flex items-center gap-1.5 text-xs font-medium text-cat-schedule">
+        打断了「{result.title}」—— 下面是<b>她自己</b>对这件事的说法
+        <InfoTip label="这段话是哪来的">
+          它不是界面上拼的 —— 来自 <span className="font-mono">POST /api/admin/plan/interrupt</span>
+          返回体里的 <span className="font-mono">explain</span>, 可以沿着她的因果链追到具体的决定。
+          下面那份对照表是它的<b>证据</b>。
+        </InfoTip>
       </p>
       {result.explain
-        ? <p className="whitespace-pre-wrap text-sm leading-relaxed text-ink">{result.explain}</p>
+        ? <p className="text-pretty whitespace-pre-wrap text-sm leading-relaxed text-ink">{result.explain}</p>
         : <p className="text-xs text-ink-faint">服务端没有给出解释文本。</p>}
-      <p className="text-[11px] leading-relaxed text-ink-faint">
-        这段话不是界面上拼的 —— 它来自 `POST /api/admin/plan/interrupt` 返回体里的
-        `explain`, 可以沿着她的因果链追到具体的决定。下面那份对照表是它的**证据**。
-      </p>
     </div>
   )
 }

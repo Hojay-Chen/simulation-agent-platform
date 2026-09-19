@@ -7,7 +7,7 @@ import {
   type RelationshipProjection,
 } from '@/api/client'
 import { useAsync } from '@/lib/useAsync'
-import { Button, Empty, Panel } from '@/components/ui'
+import { Button, Empty, InfoTip, Panel } from '@/components/ui'
 import { describeError } from '@/components/Section'
 import { Meter } from '@/components/viz/Gauge'
 import { GapNote } from '@/components/viz/panels'
@@ -52,57 +52,66 @@ export function Relation({ agentId }: { agentId: string }) {
   return (
     <div className="space-y-5">
       <Panel
-        title="她的通讯录是她自己长出来的"
+        title={
+          <div className="flex min-w-0 items-center gap-1.5">
+            <h2 className="text-sm font-medium text-ink">她的通讯录是她自己长出来的</h2>
+            <InfoTip label="她的通讯录是怎么来的">
+              平台<b>不同步</b>通讯录给她。她知道谁, 是她在聊天的过程里一点点建立起来的:
+              第一次说话、第一次被记住、第一次主动找对方。所以这一页所有的数都是<b>结果</b>,
+              没有任何一项是配置出来的。
+              <br /><br />
+              由此推出两件必须成立的事: 一段关系可以<b>变陌生</b>(长期不说话就会),
+              而"她记得你"和"你确实和她说过话"是两回事 —— 前者是她的记忆, 后者是账本。
+              下面两块就是这两样东西。
+            </InfoTip>
+          </div>
+        }
         action={<Button variant="ghost" onClick={() => { me.reload(); projection.reload() }}>
           <RefreshCw size={13} />刷新
         </Button>}
       >
-        <div className="flex items-start gap-3">
+        <p className="flex items-start gap-3 text-pretty text-xs leading-relaxed text-ink-soft">
           <Users size={16} className="mt-0.5 shrink-0 text-accent" />
-          <div className="space-y-2 text-xs leading-relaxed text-ink-soft">
-            <p>
-              平台**不同步**通讯录给她。她知道谁, 是她在聊天的过程里一点点建立起来的:
-              第一次说话、第一次被记住、第一次主动找对方。所以这里所有的数都是**结果**,
-              没有任何一项是配置出来的。
-            </p>
-            <p className="text-ink-faint">
-              由此推出两件在界面上必须成立的事: 一段关系可以**变陌生**(长期不说话就会),
-              而"她记得你"和"你确实和她说过话"是两回事 —— 前者是她的记忆, 后者是账本。
-              下面两块就是这两样东西。
-            </p>
-          </div>
-        </div>
+          这里没有"关系设置" —— 每一项都是她在聊天里长出来的, 所以一段关系也会慢慢变陌生。
+        </p>
       </Panel>
 
       <ProjectionBlock projection={projection} hasUser={userId !== null} meError={me.error} />
 
       <DimensionBlock agentId={agentId} />
 
-      <Panel title="这一页读不到什么">
-        <div className="grid gap-3 lg:grid-cols-2">
-          <GapNote title="通讯录本身没有面">
-            <p>
-              上面那些是**一个人的关系**(她与当前用户)。而她的通讯录里可能不止一个人 ——
-              §3.4 的 `RelationshipGraph` 是把她与全部 `PersonObject` 连起来的一张图。
-            </p>
-            <p>
-              缺的端点: <code>GET /api/companions/{'{id}'}/mind/relationship/graph</code>
-              —— 返回她认识的所有人以及每个人与她的维度值。有了它, 这一页才能从
-              "一条关系"变成"一张网"。
-            </p>
-          </GapNote>
-          <GapNote title="账号绑定没有面">
-            <p>
-              §6.5 里把聊天平台的 `accountId` 绑到她的 `PersonObject` 上。这条绑定是她
-              "认识某个人"的技术前提, 也是排查"她怎么不认得我了"时第一个要看的东西。
-            </p>
-            <p>
-              目前只有投影返回体里那个 `reconciled` 布尔在暗示这件事发生过, 没有任何
-              端点能列出绑定关系。
-            </p>
-          </GapNote>
-        </div>
-      </Panel>
+      <div className="flex items-start gap-2 rounded-xl border border-line bg-raised px-4 py-3">
+        <InfoTip tone="warn" label="这一页读不到的两样东西">
+          <div className="space-y-3">
+            <GapNote title="通讯录本身没有面">
+              <p>
+                上面那些是<b>一个人的关系</b>(她与当前用户)。而她的通讯录里可能不止一个人 ——
+                <span className="font-mono"> RelationshipGraph </span>
+                是把她与全部 <span className="font-mono">PersonObject</span> 连起来的一张图。
+              </p>
+              <p>
+                缺的端点: <code>GET /api/companions/{'{id}'}/mind/relationship/graph</code>
+                —— 返回她认识的所有人以及每个人与她的维度值。有了它, 这一页才能从
+                "一条关系"变成"一张网"。
+              </p>
+            </GapNote>
+            <GapNote title="账号绑定没有面">
+              <p>
+                聊天平台的 <span className="font-mono">accountId</span> 要绑到她的
+                <span className="font-mono"> PersonObject </span>上。这条绑定是她
+                "认识某个人"的技术前提, 也是排查"她怎么不认得我了"时第一个要看的东西。
+              </p>
+              <p>
+                目前只有投影返回体里那个 <span className="font-mono">reconciled</span> 布尔在暗示这件事发生过,
+                没有任何端点能列出绑定关系。
+              </p>
+            </GapNote>
+          </div>
+        </InfoTip>
+        <p className="text-xs leading-relaxed text-ink-soft">
+          这里只有<b>你和她的这一条关系</b> —— 她认识的其他人和账号绑定都还读不到。
+        </p>
+      </div>
     </div>
   )
 }
@@ -121,11 +130,22 @@ function ProjectionBlock({
   const d = projection.data
 
   return (
-    <Panel title="事实层: 从账本投影出来的互动">
+    <Panel
+      title={
+        <div className="flex min-w-0 items-center gap-1.5">
+          <h2 className="text-sm font-medium text-ink">账本上实际发生过什么</h2>
+          <InfoTip label="这一组数和下一组有什么不同">
+            这一组<b>不问她的记忆</b>, 只数账本里记下的事实; 下面那一组才是她自己的记忆。
+            两者的差别不是精度, 是权威性: 要争论"她是不是在冷落我", 看这一组;
+            要知道"她觉得自己和这个人多熟", 看下一组。记忆可以记错, 账本不会。
+          </InfoTip>
+        </div>
+      }
+    >
       {!hasUser && (
         <p className="text-xs leading-relaxed text-ink-faint">
           读不到当前用户的 id{meError ? ` (${describeError(meError)})` : ''} —— 这个端点
-          要 `userId` 才能回答"是不是你", 所以这一块暂时是空的。
+          要 userId 才能回答"是不是你", 所以这一块暂时是空的。
         </p>
       )}
 
@@ -136,9 +156,9 @@ function ProjectionBlock({
 
       {d && (
         <div className="space-y-4">
-          <p className="text-xs leading-relaxed text-ink-soft">
-            这一组数**不问她的记忆**。服务端在那份返回体里自己写了这条规则:
-            <span className="ml-1 text-ink-faint">「{d.principle}」</span>
+          <p className="text-pretty text-xs leading-relaxed text-ink-soft">
+            服务端在这份返回体里自己写了这条规则:
+            <span className="text-ink-faint">「{d.principle}」</span>
           </p>
 
           <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
@@ -149,29 +169,33 @@ function ProjectionBlock({
           </div>
 
           <div className="space-y-2">
-            <p className="text-xs font-medium text-ink-soft">她收到的消息最后都去了哪</p>
-            <AwarenessOutcome summary={d.summary} />
-            <p className="text-[11px] leading-relaxed text-ink-faint">
-              三段加起来 = {d.summary.messagesSentByPerson}(
-              她一共收到的条数)。"推后"和"没理会"的**区别**才是这一页最值钱的信息:
-              一个说明她看见了但选择晚点处理, 另一个说明她根本不知道 ——
-              而这两种情况需要的行动完全相反。
+            <p className="flex items-center gap-1.5 text-xs font-medium text-ink-soft">
+              她收到的消息最后都去了哪
+              <InfoTip label="「推后」和「没理会」差在哪">
+                三段加起来 = {d.summary.messagesSentByPerson}(她一共收到的条数)。
+                "推后"和"没理会"的<b>区别</b>才是这一块最值钱的信息:
+                一个说明她看见了但选择晚点处理, 另一个说明她根本不知道 ——
+                而这两种情况需要的行动完全相反。
+              </InfoTip>
             </p>
+            <AwarenessOutcome summary={d.summary} />
           </div>
 
           <dl className="grid gap-1.5 text-xs sm:grid-cols-2">
-            <Row k="totalEvents" v={d.summary.totalEvents} hint="账本里关于这段关系的全部事件条数。" />
-            <Row k="activitiesEnded" v={d.summary.activitiesEnded} hint="她因为你而结束了手上的活动 —— 也就是「她真的为你停下来过」的次数。" />
+            <Row k="totalEvents" label="账本里的事件条数" v={d.summary.totalEvents} hint="账本里关于这段关系的全部事件条数。" />
+            <Row k="activitiesEnded" label="她为你停下过几次" v={d.summary.activitiesEnded} hint="她因为你而结束了手上的活动 —— 也就是「她真的为你停下来过」的次数。" />
             <Row
               k="replyRate"
+              label="回复率"
               v={`${(d.summary.replyRate * 100).toFixed(0)}%`}
               hint="回得怎么样。它不等于「在意」, 只是一个比率。"
             />
-            <Row k="lastInteractionAt" v={fmtMoment(d.summary.lastInteractionAt)} hint="最后一次互动。" />
+            <Row k="lastInteractionAt" label="最后一次互动" v={fmtMoment(d.summary.lastInteractionAt)} hint="账本里记下的最后一次互动。" />
             <Row
               k="reconciled"
-              v={d.reconciled ? '账本与关系图已对齐' : '两边有出入'}
-              hint="服务端做的一个一致性检查: 账本里的事实和她的关系图对不对得上。"
+              label="账本和她的记忆对得上吗"
+              v={d.reconciled ? '对得上' : '两边有出入'}
+              hint="服务端做的一个一致性检查: 账本里的事实和她的关系图对不对得上。对不上说明其中有一样已经过期。"
             />
           </dl>
         </div>
@@ -192,9 +216,18 @@ function AwarenessOutcome({ summary }: {
 }) {
   const total = Math.max(summary.messagesSentByPerson, 1)
   const segments = [
-    { key: 'read', label: '她看了', n: summary.messagesRead, cls: 'bg-ok' },
-    { key: 'deferred', label: '她推后了', n: summary.messagesDeferred, cls: 'bg-cat-schedule' },
-    { key: 'ignored', label: '她没理会', n: summary.messagesIgnored, cls: 'bg-ink-faint' },
+    {
+      key: 'read', label: '她看了', n: summary.messagesRead, cls: 'bg-ok',
+      hint: '她做了「看一眼」这个动作, 正文确实进到了她那里。',
+    },
+    {
+      key: 'deferred', label: '她推后了', n: summary.messagesDeferred, cls: 'bg-cat-schedule',
+      hint: '她看见了, 但决定待会儿再看。这是一个决定, 不是漏看 —— 所以别催, 等等看。',
+    },
+    {
+      key: 'ignored', label: '她没理会', n: summary.messagesIgnored, cls: 'bg-ink-faint',
+      hint: '她压根没感知到 —— 通知在聊天平台那层就被拦下, 或者她当时睡着了。要改的是通知设置, 不是她。',
+    },
   ]
   return (
     <div className="space-y-2">
@@ -204,7 +237,6 @@ function AwarenessOutcome({ summary }: {
             key={s.key}
             className={s.cls}
             style={{ width: `${(s.n / total) * 100}%` }}
-            title={`${s.label}: ${s.n}`}
           />
         ))}
       </div>
@@ -214,6 +246,7 @@ function AwarenessOutcome({ summary }: {
             <span className={`h-1.5 w-1.5 rounded-full ${s.cls}`} aria-hidden="true" />
             <span className="text-ink-faint">{s.label}</span>
             <span className="font-mono text-ink tnum">{s.n}</span>
+            <InfoTip label={`${s.label}是什么意思`}>{s.hint}</InfoTip>
           </span>
         ))}
       </div>
@@ -248,7 +281,15 @@ function DimensionBlock({ agentId }: { agentId: string }) {
 
   return (
     <Panel
-      title="她的内部状态: 她把这段关系记成什么样"
+      title={
+        <div className="flex min-w-0 items-center gap-1.5">
+          <h2 className="text-sm font-medium text-ink">她把这段关系记成什么样</h2>
+          <InfoTip label="这一组数为什么可能和上面不一致">
+            这一段是<b>她的内部状态</b>, 不是账本。它可以和上面那段事实不一致 ——
+            记忆可以记错, 而账本不会。两者不一致时, 上面那段才是"发生了什么"。
+          </InfoTip>
+        </div>
+      }
       action={<Button variant="ghost" onClick={rel.reload}><RefreshCw size={13} />刷新</Button>}
     >
       {rel.error && <p className="text-xs text-danger">{describeError(rel.error)}</p>}
@@ -272,15 +313,11 @@ function DimensionBlock({ agentId }: { agentId: string }) {
             ))}
           </div>
           {items.some((i) => i.unregistered) && (
-            <p className="mt-3 text-[11px] leading-relaxed text-warn">
-              有维度前端不认识。它们照常显示, 但**方向不明** —— 颜色只反映数值高低,
-              不代表好坏。要修的是 `Relation.tsx` 里那张表。
+            <p className="mt-3 text-pretty text-[11px] leading-relaxed text-warn">
+              标着「未登记」的项, 页面上还不知道<b>往哪个方向算好</b> ——
+              它照常显示, 但颜色只反映数值高低, 不代表好坏, 别按颜色下判断。
             </p>
           )}
-          <p className="mt-4 text-[11px] leading-relaxed text-ink-faint">
-            这一段是**她的内部状态**, 不是账本。它可以和上面那段事实不一致 ——
-            记忆可以记错, 而账本不会。两者不一致时, 上面那段才是"发生了什么"。
-          </p>
         </>
       )}
     </Panel>
@@ -325,18 +362,33 @@ export function readDimensions(data: Record<string, unknown> | null): DimReading
 
 function Fact({ label, value, hint }: { label: string; value: number; hint: string }) {
   return (
-    <div className="rounded-lg border border-line bg-sunken/40 px-3 py-2" title={hint}>
-      <p className="text-[11px] text-ink-faint">{label}</p>
+    <div className="rounded-lg border border-line bg-sunken/40 px-3 py-2">
+      <p className="flex items-center gap-1 text-[11px] text-ink-faint">
+        {label}
+        <InfoTip label={`${label}是什么意思`}>{hint}</InfoTip>
+      </p>
       <p className="mt-0.5 font-mono text-xl text-ink tnum">{value}</p>
     </div>
   )
 }
 
-function Row({ k, v, hint }: { k: string; v: string | number; hint?: string }) {
+/**
+ * 一行"名字 · 值"。
+ *
+ * `k` 是后端字段名: 摆在屏幕上, 不写代码的人看不出 `activitiesEnded` 是什么。
+ * 所以给人看 `label`, `k` 只留在问号的读屏名里, 让排查的人还能和返回体对上。
+ */
+function Row({ k, label, v, hint }: {
+  k: string
+  label: string
+  v: string | number
+  hint?: string
+}) {
   return (
-    <div className="flex items-baseline gap-2" title={hint}>
-      <dt className="shrink-0 font-mono text-ink-faint">{k}</dt>
+    <div className="flex items-baseline gap-2">
+      <dt className="shrink-0 text-ink-faint">{label}</dt>
       <dd className="min-w-0 text-ink-soft">{v}</dd>
+      {hint && <InfoTip label={`${label}(字段 ${k})是什么意思`}>{hint}</InfoTip>}
     </div>
   )
 }

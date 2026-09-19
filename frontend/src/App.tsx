@@ -3,6 +3,7 @@ import { Layout } from '@/components/Layout'
 import { Dashboard } from '@/pages/Dashboard'
 import { Agents } from '@/pages/Agents'
 import { AgentDetail } from '@/pages/AgentDetail'
+import Login from '@/pages/Login'
 import { Applications } from '@/pages/Applications'
 import { ApiPortal } from '@/pages/ApiPortal'
 import { System } from '@/pages/System'
@@ -31,7 +32,7 @@ import { SPA_PATHS } from '@/lib/routes'
  * 一行都没跑。它只在"从别的页面点链接过来"时看起来正常, 所以极易漏掉。
  *
  * 这条约束比它省下的那点命名美感重要: **SPA 的路由不许落在后端拥有的前缀之下**。
- * 栏目名仍然是「API」, 那是给人看的; 路径是给机器分的。
+ * 栏目名是「接口密钥」, 那是给人看的; 路径是给机器分的。
  *
  * <h2>旧地址一律 302 到新家, 不返回空白页</h2>
  *
@@ -46,6 +47,13 @@ export default function App() {
 
   return (
     <Routes>
+      {/*
+        登录页**在外壳之外** —— 这是它唯一重要的性质。
+        放进下面那个 `<Route element={<Layout />}>` 里, 它就会长出一个页头和一条侧栏,
+        于是屏幕上同时出现"请登录"和"你已经进来了"两句话。详见 pages/Login.tsx 的类注释。
+      */}
+      <Route path={SPA_PATHS.login} element={<Login />} />
+
       <Route element={<Layout />}>
         <Route path={SPA_PATHS.dashboard} element={<Dashboard />} />
         <Route path={SPA_PATHS.agents} element={<Agents />} />

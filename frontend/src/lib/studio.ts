@@ -123,29 +123,31 @@ const SECTIONS: Record<AgentTab, SectionSpec[]> = {
   relationship: [
     {
       key: 'narrative',
-      title: '关系叙事',
+      title: '她对这段关系的说法',
       load: getRelationshipNarrative,
-      hint: '把一堆事件讲成一段话 —— 认知链自己写的。',
-      empty: '还没有生成叙事。',
+      hint: '把发生过的事串成一段话 —— 认知链自己写的, 不是模板填出来的。',
+      empty: '她还没为这段关系写过什么。',
     },
     {
       key: 'events',
-      title: '关系事件',
+      title: '发生过的事',
       load: listRelationshipEvents,
+      hint: '被她的关系图记为「事件」的那些事 —— 不是每一句话都算, 只有改变了什么的才算。',
       empty: '还没有值得记为事件的事。',
     },
     {
       key: 'shared-experiences',
       title: '共同经历',
       load: listSharedExperiences,
+      hint: '她记下的"你和她一起做过的事"。',
       empty: '还没有共同经历。',
     },
     {
       key: 'promises',
-      title: '承诺',
+      title: '她答应过的事',
       load: listPromises,
-      hint: '她答应过的事。未兑现的会一直留在这里。',
-      empty: '没有未兑现的承诺。',
+      hint: '未兑现的会一直留在这里 —— 所以这一块越短越好。',
+      empty: '她还没答应过什么。',
     },
   ],
 
@@ -156,30 +158,55 @@ const SECTIONS: Record<AgentTab, SectionSpec[]> = {
   mind: [
     {
       key: 'self-model',
-      title: '自我模型',
+      title: '她怎么看自己',
       load: getSelfModel,
-      hint: '她对自己的描述 —— 由认知链从长期记忆里归纳。它与「档案」里那份被编译出来的人格是两样东西: 一个是她自己写的, 一个是给她的。',
-      empty: '认知链还没归纳出自我模型。',
+      hint: '认知链从长期记忆里归纳出的、她自己写的自我描述。它与「档案」里那份被编译出来的人格是两样东西: 一个是她自己写的, 一个是给她的。',
+      empty: '认知链还没归纳出她怎么看自己。',
     },
     {
       key: 'metrics',
-      title: '认知指标',
+      title: '她花了多少(认知链的计数器)',
       load: getMetrics,
-      hint: '认知链自己的计数器(轮次、模型调用、命中率、耗时)。它是"这个 agent 花了多少"的唯一来源。',
+      hint: '认知链自己的计数器(轮次、模型调用、命中率、耗时)。它是"这个数字人花了多少"的唯一来源。',
+      empty: '认知链还没写过计数器。',
     },
-    { key: 'traces', title: '认知轨迹', load: listTraces, empty: '还没有轨迹。' },
-    { key: 'reflections', title: '反思', load: listReflections, empty: '她还没反思过什么。' },
-    { key: 'experiences', title: '经历', load: listExperiences, empty: '还没有积累经历。' },
+    {
+      key: 'traces',
+      title: '她每一步的判断',
+      load: listTraces,
+      hint: '认知链每一步留下的记录 —— 想知道"她当时为什么这么做"就从这里翻。',
+      empty: '还没有留下判断记录。',
+    },
+    {
+      key: 'reflections',
+      title: '她的反思',
+      load: listReflections,
+      hint: '她回过头看自己做过的事之后写下的东西。',
+      empty: '她还没反思过什么。',
+    },
+    {
+      key: 'experiences',
+      title: '她的经历',
+      load: listExperiences,
+      hint: '她攒下来的经历 —— 与她认识谁无关, 是她自己身上发生过的事。',
+      empty: '还没有积累经历。',
+    },
   ],
 
   archive: [
-    { key: 'persona-versions', title: '人格版本', load: listPersonaVersions, empty: '还没有人格版本。' },
-    { key: 'life-events', title: '生活事件', load: listLifeEvents, empty: '还没有生活事件。' },
+    {
+      key: 'persona-versions',
+      title: '人格的每一版',
+      load: listPersonaVersions,
+      hint: '每次改人格都会落一个新版本, 旧的不删 —— 所以能看见她是怎么被改过来的。',
+      empty: '还没有人格版本。',
+    },
+    { key: 'life-events', title: '她生活里的事', load: listLifeEvents, empty: '还没有生活事件。' },
     {
       key: 'world-events',
-      title: '世界事件(原始)',
+      title: '世界事件(原文)',
       load: listWorldEvents,
-      hint: '滚动 50 条的原始列表。它的**分类**在「今天」和运维的「事件流」里画出来了, 这里是原文。',
+      hint: '滚动 50 条的原始列表, 未加工。它的分类画在「今天」那一页的时间轴上, 这里是原文。',
       empty: '世界还很安静。',
     },
     {
@@ -191,16 +218,16 @@ const SECTIONS: Record<AgentTab, SectionSpec[]> = {
     },
     {
       key: 'life',
-      title: '生活状态(原始)',
+      title: '生活状态(原文)',
       load: getLife,
-      hint: '`GET /life` 的完整返回体。「今天」那一页把它画成了时间轴, 这里是原文。',
+      hint: '生活线接口的完整返回体, 未加工。「今天」那一页把它画成了时间轴, 这里是原文。',
       empty: '生活线还没启动。',
     },
     {
       key: 'lap-catalog',
-      title: '应用平台能力',
+      title: '应用能力清单(原文)',
       load: () => getLapCatalog(),
-      hint: '来自**聊天平台**的应用平台(LAP)。这份目录是平台能提供什么, 不等于这个 agent 正在玩什么 —— 后者要等它真的开了一局才有会话。',
+      hint: '来自聊天平台的应用能力目录。这份清单说的是平台能提供什么, 不等于这个数字人正在玩什么 —— 后者要等它真的开了一局才有会话。',
       empty: '应用平台现在没有登记任何能力。要么它还没接上来, 要么目录是空的。',
     },
   ],
@@ -271,6 +298,24 @@ export const UNKNOWN_STAGE = '未标注'
 export function stageOf(c: Companion): string {
   const s = (c.relationshipStage ?? '').trim()
   return s || UNKNOWN_STAGE
+}
+
+/**
+ * 关系阶段的机器名 → 中文 —— **只用于显示**。
+ *
+ * `stageOf()` 返回的原值一个字都不能改: 分组、统计和测试都按原值走, 这里换的只是
+ * 屏幕上那两个字。认不出的阶段原样返回(与 `typeZh` 同一个做法): 编一个中文词出来,
+ * 会让排查的人看不到真正的取值。
+ */
+const STAGE_ZH: Record<string, string> = {
+  stranger: '陌生',
+  friend: '朋友',
+  close: '亲近',
+  deeply_connected: '深度联结',
+}
+
+export function stageZh(stage: string): string {
+  return STAGE_ZH[stage] ?? stage
 }
 
 /**

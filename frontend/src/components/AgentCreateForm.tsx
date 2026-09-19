@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { Sparkles } from 'lucide-react'
-import { Button, ErrorNote, Field, inputClass } from './ui'
+import { Button, ErrorNote, Field, InfoTip, inputClass } from './ui'
 
 /**
  * 建 agent 的两种给法 —— 与 openapi 的 CreateAgentBody 一一对应:
@@ -30,14 +30,14 @@ export interface AgentFormErrors {
 export function validateAgentForm(input: AgentFormInput): AgentFormErrors {
   const errors: AgentFormErrors = {}
   if (!input.description.trim()) {
-    errors.description = '请用一段自然语言描述这个人 —— 平台会把它编译成人格'
+    errors.description = '请用一段自然语言描述她 —— 平台会把它编译成人格'
   } else if (input.description.trim().length < 8) {
     // 太短的描述编译不出稳定人格, 服务端会成功但结果随机 —— 与其生成一个
     // 莫名其妙的 agent, 不如在本地要求写够一句话。
     errors.description = '描述太短, 至少写一句完整的话(8 字以上)'
   }
   if (!input.relationshipType) {
-    errors.relationshipType = '请选择与使用者的关系'
+    errors.relationshipType = '请选择她和你是什么关系'
   }
   return errors
 }
@@ -75,24 +75,32 @@ export function AgentCreateForm({ onSubmit, submitting, error }: {
       }}
     >
       <Field
-        label="人格描述"
+        label="用一段话描述她"
         error={shown.description}
         // 例子不该暗示一种默认。原文是「一位在旧书店工作的女孩, 说话慢, 喜欢在
         // 雨天聊诗, 偶尔健忘」—— 那个"女孩"是伴侣时代的默认(agent 恒为女性),
         // 而 agent 现在是按用户需求生成的: 它可以是任何性别、任何年纪。
         // 换成同样有质感、但没有性别标记的一个, 顺手把年龄也拉开一点 ——
         // 例子是用户唯一的参照物, 它长什么样, 用户就照着写什么样。
-        hint="例: 一位退休的地理老师, 说话慢, 喜欢在雨天聊诗, 偶尔健忘。"
+        hint={
+          <>
+            例: 一位退休的地理老师, 说话慢, 喜欢在雨天聊诗, 偶尔健忘。
+            <InfoTip label="这段描述会变成什么" align="center">
+              这段话会被平台<b>编译成人格</b> —— 不是存起来当简介, 而是她之后的说话方式、记性和脾气。
+              描述太短编译出来的结果会不稳定, 所以至少要写完整的一句话。
+            </InfoTip>
+          </>
+        }
       >
         <textarea
           className={`${inputClass} min-h-[104px] resize-y`}
           value={description}
           onChange={(e) => setDescription(e.target.value)}
-          placeholder="用一段自然语言描述这个 agent 是谁…"
+          placeholder="用一段自然语言描述她是谁…"
         />
       </Field>
 
-      <Field label="与使用者的关系" error={shown.relationshipType}>
+      <Field label="她和你是什么关系" error={shown.relationshipType}>
         <select
           className={inputClass}
           value={relationshipType}
@@ -108,7 +116,7 @@ export function AgentCreateForm({ onSubmit, submitting, error }: {
 
       <Button type="submit" disabled={submitting}>
         <Sparkles size={14} />
-        {submitting ? '编译人格中…' : '创建 agent'}
+        {submitting ? '编译人格中…' : '创建数字人'}
       </Button>
     </form>
   )
