@@ -14,7 +14,7 @@ import javax.websocket.CloseReason;
 import javax.websocket.ContainerProvider;
 import javax.websocket.Endpoint;
 import javax.websocket.EndpointConfig;
-import javax.websocket.OnMessage;
+import javax.websocket.MessageHandler;
 import javax.websocket.Session;
 import javax.websocket.WebSocketContainer;
 
@@ -562,10 +562,21 @@ public final class HttpChatPlatformGateway implements ChatPlatformGateway, AutoC
      *
      * <p>{@code synchronized}: 心跳、重连计划、以及显式的 {@code connect} 都可能同时想开一条,
      * 而两条并存的连接会让<b>同一条消息响两次</b>(平台会给每个连接各发一份)。
+     *
+     * <p>被平台拒绝过({@code sessionRejected})就<b>不再开</b>。这个判断在
+     * {@link #scheduleReconnect} 里已经有过一次, 这里再判一次不是重复: 那边判的是
+     * "现在要不要排一次重连", 而排在队里的那个任务要等退避(最长 60 秒)才醒 ——
+     * 醒来的时候令牌可能早就被判死了。少了这一道, 那条任务会照常连上去、照常打一行
+     * "长连接已建立", 然后在同一秒里再被拒一次。现象是"令牌已经废了, 而日志里还在
+     * 反复说连上了", 那比不连更难看懂。
      */
     private synchronized void openSocket() {
         ChatSession current = this.session;
         if (shutDown || current == null) {
+            return;
+        }
+        if (sessionRejected.get()) {
+            log.debug("[聊天网关] 令牌已被平台判死, 这次重连(早就排在队里的那个)不做了");
             return;
         }
         closeSocket();
@@ -703,19 +714,46 @@ public final class HttpChatPlatformGateway implements ChatPlatformGateway, AutoC
      * {@link HttpChatPlatformGateway} 上 —— 于是重连之后新的实例接着用同一份状态,
      * 这正是补发游标能跨连接活着的原因。
      *
-     * <p><b>{@code @OnMessage} 不能省。</b>没有这个注解容器不会报任何错 —— 它只是永远不把
-     * 报文交给这个方法, 于是现象是"连上了、READY 也没有、什么都不来",
-     * 而所有直接调 {@code onNotification} 的单元测试全绿。
+     * <h2>★ 入站帧的投递点: {@code onOpen} 里注册的那个 {@link MessageHandler}</h2>
+     *
+     * <p>这块地方踩过坑, 而且踩得很安静, 所以把"为什么是它"写清楚。
+     *
+     * <p>javax.websocket 1.1 的 {@link Endpoint} 里<b>根本没有消息方法</b> —— 它只有
+     * {@code onOpen}(抽象)、{@code onClose}、{@code onError} 三个。也就是说
+     * "覆写基类的 {@code onMessage}"这条路上没有东西可覆写。
+     *
+     * <p>那注解呢? 一个标着 {@code @OnMessage} 的 {@code onMessage(String, Session)}
+     * <b>在这条腿上实测不生效</b>: 编译通过、{@code connectToServer} 不抛、
+     * {@code onOpen} 照常触发、心跳照常收发(那是 {@code send} 方向)、日志里一句错都没有 ——
+     * 而那个方法一次都没被调到, 于是一条入站帧都到不了。{@code @OnMessage} 是给
+     * <b>POJO 端点</b>(交给容器的 {@code @ClientEndpoint} 类或注解实例)用的;
+     * 本类是<b>程序化端点</b>(要带外部实例的状态), 走的是另一条路。
+     *
+     * <p>程序化端点的入站路径是规范明文规定的这一条: <b>在 {@code onOpen} 里
+     * {@code session.addMessageHandler(...)}</b>。所以投递点是下面那个
+     * {@code MessageHandler.Whole<String>}。
+     *
+     * <p>这条腿聋掉时的现象值得记住, 因为它在界面上与"她确实没有新消息"完全一样:
+     * 连接是好的({@code connected()} 也答 true, 它只知道 socket 还开着)、
+     * 心跳在跑、日志干净 —— 只是永远没有人说话。能发现它的只有一件事:
+     * <b>让一条信号真的走一遍整条路</b>(见 {@code WsChatPlatformGatewayTest})。
      */
     private final class StreamEndpoint extends Endpoint {
 
         @Override
         public void onOpen(Session opened, EndpointConfig config) {
+            // 先挂处理器, 再打日志: 万一 addMessageHandler 抛了, 日志的顺序会把它暴露出来
+            // (反过来的话, 日志会说"已就绪"而实际上一个处理器都没挂上)
+            opened.addMessageHandler(new MessageHandler.Whole<String>() {
+                @Override
+                public void onMessage(String message) {
+                    handleFrame(message);
+                }
+            });
             log.debug("[聊天网关] WS 会话 {} 已就绪, 等平台的 READY", opened.getId());
         }
 
-        @OnMessage
-        public void onMessage(String text, Session opened) {
+        private void handleFrame(String text) {
             ClientStreamFrame frame;
             try {
                 frame = mapper.readValue(text, ClientStreamFrame.class);
