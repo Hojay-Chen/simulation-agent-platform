@@ -50,6 +50,22 @@ echo "══════════ G6 仿真 Agent 控制台验收 (check-cons
 note "C1: 环境就绪"
 [ -f "$JAR" ] && ok "$(basename "$JAR") 存在" || { fail "缺 $JAR —— 先 gradle :openapi:bootJar"; echo ""; echo "❌ 验收未通过"; exit 1; }
 psqlc "select 1" >/dev/null 2>&1 && ok "PG 在" || fail "PG 不可达(companion 库)"
+# npm 必须解析成**绝对路径**, 而且要把它的目录前置进子进程的 PATH —— C3 要用。
+#
+# 本机 node 是 nvm 装的(`~/.nvm/versions/node/*/bin/`), 而 nvm 只在**交互式** shell
+# 的 .bashrc 里注入 PATH。于是从非登录 shell 跑本脚本(比如
+# `sudo -u ubuntu env … bash scripts/check-console.sh`, 那正是"拿生产钥跑验收"的
+# 唯一姿势)时, C3 会死在 `exec: npm: not found`, **报出来却像前端坏了**。
+# deploy.sh 里是同一个坑, 那里有完整注释 —— 这里用同一套解析。
+NPM="$(command -v npm || true)"
+if [ -z "$NPM" ]; then
+  NPM_HOME="$(getent passwd "$(id -un)" | cut -d: -f6)"
+  # sort -V 而不是字典序 —— 否则 v9 会排在 v24 后面
+  NPM="$(ls -1 "$NPM_HOME"/.nvm/versions/node/*/bin/npm 2>/dev/null | sort -V | tail -1 || true)"
+fi
+[ -n "$NPM" ] && [ -x "$NPM" ] && ok "npm 在 ($NPM)" \
+  || { fail "找不到 npm —— 装 node, 或把 npm 放进 PATH"; echo ""; echo "❌ 验收未通过"; exit 1; }
+NPM_DIR="$(dirname "$NPM")"
 [ -d "$ROOT/frontend/node_modules" ] && ok "控制台依赖已装" || { fail "缺 frontend/node_modules —— 先 cd frontend && npm ci"; echo ""; echo "❌ 验收未通过"; exit 1; }
 [ -f "$ROOT/frontend/dist/index.html" ] && ok "构建产物在 (frontend/dist)" || { fail "缺 frontend/dist —— 先 npm run build"; echo ""; echo "❌ 验收未通过"; exit 1; }
 
@@ -63,14 +79,26 @@ if curl -s -m 2 -o /dev/null "$BASE/api/health"; then
   PROBE=$(curl -s -m 5 -o /dev/null -w '%{http_code}' -H "X-Admin-Key: $ADMIN" "$BASE/api/v1/openapi/clients")
   if [ "$PROBE" = "200" ]; then
     ok "openapi 已在跑 (复用, 管理钥对得上)"
-  elif [ "$PROBE" = "503" ]; then
-    fail "8092 已在跑但没配 OPENAPI_ADMIN_KEY(管理面 503) —— 它是别的用途起的实例"
-    echo "   停掉它再跑本脚本: pkill -f simulation-agent-openapi"
-    echo ""; echo "❌ 验收未通过"; exit 1
   else
-    fail "8092 已在跑, 但它不认本脚本的管理钥 (期望 200, 实得 $PROBE)"
-    echo "   很可能上一个验收脚本(check-openapi.sh)留下的实例, 用的是另一把 key。"
-    echo "   停掉它再跑: pkill -f simulation-agent-openapi"
+    if [ "$PROBE" = "503" ]; then
+      fail "8092 已在跑但没配 OPENAPI_ADMIN_KEY(管理面 503) —— 它是别的用途起的实例"
+    else
+      fail "8092 已在跑, 但它不认本脚本的管理钥 (期望 200, 实得 $PROBE)"
+    fi
+    # 复用不了时, **先分清占着 8092 的是谁** —— 这个区别决定了下一步能不能 pkill。
+    # systemd 的 luxera-agent-openapi 就是生产服务; 而本脚本原本无差别地建议
+    # `pkill -f simulation-agent-openapi`, 照着做等于把线上打掉, 且 pkill 之后
+    # systemd 会按 Restart 策略把它拉起来 —— 故障看起来像"服务自己重启了",
+    # 不像"有人照验收脚本的提示杀过它"。
+    if systemctl is-active --quiet luxera-agent-openapi 2>/dev/null; then
+      echo "   占着 8092 的是**生产服务**(systemd: luxera-agent-openapi) —— 不要 pkill 它。"
+      echo "   把它的管理钥交给本脚本即可复用(生产钥在 /etc/agent-platform/.env):"
+      echo "     sudo bash -c 'set -a; . /etc/agent-platform/.env; set +a; exec sudo -u ubuntu \\"
+      echo "       env OPENAPI_ADMIN_KEY=\"\$OPENAPI_ADMIN_KEY\" bash scripts/check-console.sh'"
+    else
+      echo "   占着 8092 的不是 systemd 服务, 很可能是上一个验收脚本(check-openapi.sh)"
+      echo "   留下的实例, 用的是另一把 key。停掉它再跑: pkill -f simulation-agent-openapi"
+    fi
     echo ""; echo "❌ 验收未通过"; exit 1
   fi
 else
@@ -89,7 +117,7 @@ fi
 note "C3: vite dev"
 # 同样要 exec: 否则 kill 掉的是子 shell, npm/vite 继续活着占 5174。
 # 且 vite 会 fork 出真正的 node 进程, 所以记的 pid 用进程组收尾(见 cleanup)。
-( cd "$ROOT/frontend" && exec npm run dev ) > "$TMP/vite.log" 2>&1 &
+( cd "$ROOT/frontend" && exec env PATH="$NPM_DIR:$PATH" "$NPM" run dev ) > "$TMP/vite.log" 2>&1 &
 PIDS+=("$!")
 wait_up "$VITE" 40 || { fail "vite dev 没起来: $(tail -3 "$TMP/vite.log")"; echo ""; echo "❌ 验收未通过"; exit 1; }
 SPA=$(curl -s -m 5 "$VITE/")

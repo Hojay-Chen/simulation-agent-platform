@@ -56,7 +56,17 @@ if curl -s -m 2 -o /dev/null "$BASE/api/health"; then
     ok "openapi 已在跑 (复用, 管理钥对得上)"
   else
     fail "8092 已在跑, 但它不认本脚本的管理钥 (期望 200, 实得 $PROBE)"
-    echo "   多半是 check-console.sh 留下的实例。停掉再跑: pkill -f simulation-agent-openapi"
+    # 复用不了时**先分清占着 8092 的是谁** —— systemd 的 luxera-agent-openapi
+    # 就是生产服务。原本这里无差别地建议 pkill, 照着做等于打掉线上, 而 systemd
+    # 随后会按 Restart 策略拉起来 —— 故障看起来像"服务自己重启了"。
+    if systemctl is-active --quiet luxera-agent-openapi 2>/dev/null; then
+      echo "   占着 8092 的是**生产服务**(systemd: luxera-agent-openapi) —— 不要 pkill 它。"
+      echo "   把它的管理钥交给本脚本即可复用(生产钥在 /etc/agent-platform/.env):"
+      echo "     sudo bash -c 'set -a; . /etc/agent-platform/.env; set +a; exec sudo -u ubuntu \\"
+      echo "       env OPENAPI_ADMIN_KEY=\"\$OPENAPI_ADMIN_KEY\" bash scripts/check-openapi.sh'"
+    else
+      echo "   多半是 check-console.sh 留下的实例。停掉再跑: pkill -f simulation-agent-openapi"
+    fi
     echo ""; echo "❌ 验收未通过"; exit 1
   fi
 else
@@ -114,11 +124,42 @@ KEY2=$(echo "$CLIENT2" | python3 -c 'import sys,json;print(json.load(sys.stdin)[
 ISO_CODE=$(curl -s -o /dev/null -w '%{http_code}' -H "Authorization: Bearer $KEY2" "$BASE/api/v1/openapi/agents/$AGENT2")
 [ "$ISO_CODE" = "404" ] && ok "B 用自己的 key 读 A 的 agent → 404 (归属隔离)" || fail "归属隔离期望 404, 实得 $ISO_CODE"
 
-# ── O7 吊销 ──
+# 断言完就立刻删掉 AGENT2 —— **必须在这里, 不能挪到最后的收尾段**: 下一步 O7 会吊销
+# $KEY, 那之后再用它删 agent 就是 401(这条实测过: 把删除放到 O7 之后, 收尾本身
+# 报的就是 401, 于是"修好的收尾"反过来成了新的漏点)。
+CL2=$(curl -s -o /dev/null -w '%{http_code}' -X DELETE -H "Authorization: Bearer $KEY" "$BASE/api/v1/openapi/agents/$AGENT2")
+[ "$CL2" = "204" ] && ok "删掉归属测试 agent (O6 造的)" \
+  || fail "归属测试 agent 没删掉 (期望 204, 实得 $CL2) —— 它会作为'晚晚'留在生产库的伴侣列表里"
+
+# ── O7 吊销 + 收尾 ──
 note "O7: 吊销客户端"
 curl -s -X DELETE -H "X-Admin-Key: $ADMIN" -o /dev/null "$BASE/api/v1/openapi/clients/$CLIENT_ID"
 REV_CODE=$(curl -s -o /dev/null -w '%{http_code}' -H "Authorization: Bearer $KEY" "$BASE/api/v1/openapi/agents")
 [ "$REV_CODE" = "401" ] && ok "吊销后同一把 key 立即 401" || fail "吊销后期望 401, 实得 $REV_CODE"
+
+# ── O8 收尾: 吊销 O6 造的那把钥匙 ──
+#
+# 本脚本跑的是**生产库**(companion, 不是 companion_test), 所以验收留下的每一样
+# 东西都是别人能看见的: agent 会作为"晚晚"出现在聊天平台的伴侣列表里, 而一把没吊销
+# 的钥匙就是一把没人再持有、也没人再记得的有效凭据。
+#
+# 这里曾经漏掉过 O6 造的两样东西(AGENT2 与 CLIENT2), 收尾只吊销了 CLIENT_ID。
+# 后果是**每跑一次就留下一个活 agent 与一把 ACTIVE 的钥匙** —— 到 2026-09-19
+# 已累积 8 把 ACTIVE 的 check-openapi-b-*。
+# AGENT2 的删除在 O6 末尾(那时 $KEY 还有效); 这里只剩 CLIENT2 的吊销,
+# 它走管理钥, 所以放在 O7 之后没有顺序问题。
+note "O8: 收尾(吊销 O6 造的客户端)"
+# 注意 CLIENT2 是**响应体**, 不是 id —— 要像上面 CLIENT_ID 那样解析出 clientId。
+# (直接把 $CLIENT2 拼进 URL 会得到一个含 JSON 的路径, curl 当场报错, 而
+#  `set -euo pipefail` 让脚本在这里静默退出: 收尾段连同最后的 ✅/❌ 一起不打印,
+#  看起来像"跑完了", 实际是漏在了最后一步。)
+if [ -n "${CLIENT2:-}" ]; then
+  CLIENT2_ID=$(echo "$CLIENT2" | python3 -c 'import sys,json;print(json.load(sys.stdin)["clientId"])' 2>/dev/null || true)
+  curl -s -X DELETE -H "X-Admin-Key: $ADMIN" -o /dev/null "$BASE/api/v1/openapi/clients/$CLIENT2_ID"
+  REV2=$(curl -s -o /dev/null -w '%{http_code}' -H "Authorization: Bearer $KEY2" "$BASE/api/v1/openapi/agents")
+  [ "$REV2" = "401" ] && ok "吊销第二个客户端(O6 造的)" \
+    || fail "第二个客户端没吊销掉 (期望 401, 实得 $REV2) —— 它会作为 ACTIVE 留在库里"
+fi
 
 echo ""
 if [ "$FAIL" = "0" ]; then
