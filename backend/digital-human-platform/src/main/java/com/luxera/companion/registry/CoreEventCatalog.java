@@ -43,7 +43,7 @@ import java.util.stream.Collectors;
  *   <tr><th>字段</th><th>回答的问题</th></tr>
  *   <tr><td>{@link EventSpec#typeId}</td><td>它叫什么(唯一标识)</td></tr>
  *   <tr><td>{@link EventSpec#category}</td>
- *       <td><b>它是哪一类</b> —— A 持续影响 / B 感官实时 / C 安排。<b>这一列决定了它被哪个数据结构接住</b></td></tr>
+ *       <td><b>它是哪一类</b> —— A 持续影响 / B 实时感官 / C 计划表。<b>这一列决定了它被哪个数据结构接住</b></td></tr>
  *   <tr><td>{@link EventSpec#payload}</td><td>它带什么信息</td></tr>
  *   <tr><td>{@link EventSpec#semantics}</td><td>它的语义 —— 什么情况下会产生它</td></tr>
  *   <tr><td>{@link EventSpec#producer} / {@link EventSpec#consumer}</td>
@@ -69,14 +69,26 @@ public final class CoreEventCatalog {
      * <p>它是枚举, 这与 P4 不冲突: 它<b>不是扩展机制</b>, 而是这套仿真对
      * "世界如何影响一个人"这个问题给出的<b>完整分类</b>。加第四类意味着改架构,
      * 不是加功能。一个把"加第四类"当成常规操作的目录, 说明前三类的划分是错的。
+     *
+     * <h2>{@link #label} 用的是<b>用户自己的词</b>, 而不是我另起的一套</h2>
+     *
+     * 这两个中文字的取值不是随意的: 控制台(Being Studio)也要显示它们, 而在此之前
+     * 前端自己抄了一份 —— 于是两份已经漂了({@code 感官实时} 与 {@code 实时感官},
+     * {@code 安排} 与 {@code 计划表})。<b>漂的那一份没有人会去报告</b>, 因为两个词
+     * 都对, 只是不同。
+     *
+     * <p>对齐的方向是<b>往后端对齐</b>: 目录是这一类别的所有者, 而第三类改叫
+     * {@code 计划表} 是因为那是用户自己用的词(见他对 § C 类事件的原话:
+     * "像计划表这种可能用队列还不好实现")。前端现在从 {@code /api/meta/event-types}
+     * 取这一列, 于是"文档里印的"和"界面上显示的"从此是同一个字符串。
      */
     public enum Category {
         /** A 类: 持续影响。归宿 {@code ContinuousEffectLedger}。 */
         STATE_EFFECT("持续影响", "一直生效直到条件改变, 由账本每 tick 结算"),
-        /** B 类: 感官实时。归宿 {@code RealtimeEventQueue}。 */
-        SENSORY("感官实时", "发生在某一刻, 需要她立刻知道或反应"),
-        /** C 类: 安排。归宿 {@code PlanBoard}。 */
-        SCHEDULED("安排", "世界在某段时间里留了一件事, 要不要做由她决定");
+        /** B 类: 实时感官。归宿 {@code RealtimeEventQueue}。 */
+        SENSORY("实时感官", "发生在某一刻, 需要她立刻知道或反应"),
+        /** C 类: 计划表。归宿 {@code PlanBoard}。 */
+        SCHEDULED("计划表", "世界在某段时间里留了一件事, 要不要做由她决定");
 
         private final String label;
         private final String note;

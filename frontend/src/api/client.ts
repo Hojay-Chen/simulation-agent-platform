@@ -722,6 +722,79 @@ export function getLapCatalog(): Promise<LapCapability[]> {
   return request<LapCapability[]>('/api/lap/catalog')
 }
 
+// ── 词汇表 ─────────────────────────────────────────────────────────────────
+
+/** 一类机制。`category` 与 `world_event.category` 那一列**同词**(`STATE_EFFECT` / `SENSORY` / `SCHEDULED`)。 */
+export interface EventCategoryEntry {
+  category: string
+  /** 中文名 —— 服务端给, 前端**不该**再抄一份。 */
+  label: string
+  /** 这一类在机制上是什么意思(由哪个数据结构接住)。 */
+  note: string
+  count: number
+}
+
+/** 一条事件类型。 */
+export interface EventTypeEntry {
+  /** `namespace.name.vN` —— 完整标识, 能 `parse` 回三段。 */
+  type: string
+  /** `namespace.name` —— 不含版本, 按类型订阅 handler 时用它。 */
+  subscriptionKey: string
+  namespace: string
+  name: string
+  version: number
+  category: string
+  categoryLabel: string
+  /** A 类作用在哪个通道上; 否则 null。 */
+  channel?: string | null
+  /** B 类走哪个感官; 否则 null。 */
+  modality?: string | null
+  payload?: string
+  semantics?: string
+  producer?: string
+  consumer?: string
+  /** 有没有消费者。为假不一定是错 —— 但一定是需要人看一眼的事。 */
+  claimed: boolean
+}
+
+export interface EventNamespaceEntry {
+  namespace: string
+  count: number
+  types: EventTypeEntry[]
+}
+
+/** `GET /api/meta/event-types` 的返回体 —— **目录本身**, 不是它的一个投影。 */
+export interface EventTypeCatalog {
+  count: number
+  categories: EventCategoryEntry[]
+  namespaces: EventNamespaceEntry[]
+  /** 标准持续影响通道(`body.warmth` 等)。 */
+  channels: string[]
+  /** 五种感官通道 —— 封闭集合。 */
+  modalities: string[]
+  /** 没有消费者的类型标识 —— **健康状态是空**。 */
+  unclaimed: string[]
+  types: EventTypeEntry[]
+}
+
+/**
+ * 这套仿真的**词汇表**: 世界能发出哪些事件、影响作用在哪些通道上、人靠哪几种感官接收。
+ *
+ * <h2>它替掉的是什么</h2>
+ *
+ * 在它之前, 前端只能显示"线上真的出现过的类型" —— 因为 `CoreEventCatalog` 是服务端的
+ * 常量, 没有出口。于是"哪几类事件从来没发生过"这个问题答不了, 而它恰恰是运维最需要的
+ * 那一个: 一个从来没出现过的类型, 要么是那条链还没接通, 要么是它的订阅键写错了。
+ *
+ * <h2>它与事件流是**两份**数据, 不要在服务端合成一份</h2>
+ *
+ * 这一份随代码变(加了新事件就多一条), 事件流那一份随数据变(今天发生过什么)。
+ * 前端的用法是各取一份、在内存里对一次 —— 那个对账的结果才是答案。
+ */
+export function getEventTypeCatalog(): Promise<EventTypeCatalog> {
+  return request<EventTypeCatalog>('/api/meta/event-types')
+}
+
 // ── V2.2 观测面 ─────────────────────────────────────────────────────────────
 //
 // 下面这些是"她的一天 / 计划表 / 手机 / 关系网 / 事件流"五页**实际依赖**的端点。
@@ -729,9 +802,14 @@ export function getLapCatalog(): Promise<LapCapability[]> {
 //
 // 与之相对, §V2.2 里还有一批控制器**没有**任何 HTTP 面: PlanRevision、
 // ContinuousEffectLedger、整个 phone/ 包(11 个类)、boundary/event/* 的 fabric、
-// Environment、以及 47 条事件目录的 CoreEventCatalog。那部分不在这里编一个函数
-// 出来假装能调 —— 编出来的函数会在页面上变成一条没有解释的 404。它们出现在
-// 各页的「缺口」区块里, 并写清楚缺的是哪个端点。
+// Environment。那部分不在这里编一个函数出来假装能调 —— 编出来的函数会在页面上
+// 变成一条没有解释的 404。它们出现在各页的「缺口」区块里, 并写清楚缺的是哪个端点。
+//
+// `CoreEventCatalog` 曾经也在上面那一串里, 现在不在了: `MetaCatalogController` 给了
+// 它一条出口(见下面的 `getEventTypeCatalog`)。**但它给的不是"事件流的分类"** ——
+// 目录用的是 `namespace.name.vN` 这套词汇, 而线上事件流里跑的还是 `WorldEventType`
+// 那 15 个大写字符串。两套词汇并存这件事没有被这个端点解决, 它只是让"目录里有什么"
+// 第一次可读。见 `lib/events.ts` 的类注释。
 
 /** `/api/v10/perception/explain` 的返回体。 */
 export interface PerceptionExplain {

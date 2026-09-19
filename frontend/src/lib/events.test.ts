@@ -13,8 +13,10 @@ import {
   awarenessOf,
   classifyEvent,
   classifyFromServer,
+  CLASS_OF_SERVER_CATEGORY,
   eventLabelZh,
   isKnownEventType,
+  reconcileCatalog,
   ladderIndexOf,
   weightOf,
   type EventClass,
@@ -147,5 +149,74 @@ describe('展示表', () => {
   it('认不出的类型原样返回机器名 —— 编一个中文名会让人以为是登记过的', () => {
     expect(eventLabelZh('USER_MESSAGE_NOTIFIED')).toBe('手机响了')
     expect(eventLabelZh('SOMETHING_NEW')).toBe('SOMETHING_NEW')
+  })
+})
+
+describe('reconcileCatalog', () => {
+  const cat = { types: [{ type: 'body.warmth-changed.v1' }, { type: 'plan.item-due.v1' }] }
+
+  it('两个集合的交集与差集都报出来', () => {
+    const r = reconcileCatalog(cat, ['body.warmth-changed.v1', 'LEGACY_THING'])
+    expect(r.observedCount).toBe(2)
+    expect(r.matchedCount).toBe(1)
+    expect(r.neverSeen.map((t) => t.type)).toEqual(['plan.item-due.v1'])
+    expect(r.outside).toEqual(['LEGACY_THING'])
+  })
+
+  it('两套词汇完全不相交时 matchedCount 是 0 —— 这是今天线上的真实状态', () => {
+    const r = reconcileCatalog(cat, ['USER_MESSAGE_NOTIFIED', 'WORLD_EVENT_OCCURRED'])
+    // 这个数不是"有个类型没登记", 而是一句结论: 这个流里的名字与目录里的名字
+    // 不是同一套词汇。界面据此换一个说法 —— 而那一天它不再是 0 时, 界面自己会
+    // 换回来, 不需要改代码。
+    expect(r.matchedCount).toBe(0)
+    expect(r.neverSeen).toHaveLength(2)
+    expect(r.outside).toHaveLength(2)
+  })
+
+  it('读不到目录时是"全部都在目录外", 而不是抛', () => {
+    const r = reconcileCatalog(null, ['ANYTHING'])
+    expect(r.matchedCount).toBe(0)
+    expect(r.neverSeen).toEqual([])
+    expect(r.outside).toEqual(['ANYTHING'])
+  })
+
+  it('同一个名字出现多次只算一种 —— 数的是类型, 不是记录', () => {
+    const r = reconcileCatalog(cat, ['plan.item-due.v1', 'plan.item-due.v1', 'plan.item-due.v1'])
+    expect(r.observedCount).toBe(1)
+    expect(r.matchedCount).toBe(1)
+  })
+
+  it('空窗口: 目录里的每一条都"从没出现过"', () => {
+    const r = reconcileCatalog(cat, [])
+    expect(r.observedCount).toBe(0)
+    expect(r.matchedCount).toBe(0)
+    expect(r.neverSeen).toHaveLength(2)
+    expect(r.outside).toEqual([])
+  })
+
+  it('传进来的 Set 不会被改', () => {
+    const seen = new Set(['body.warmth-changed.v1'])
+    reconcileCatalog(cat, seen)
+    expect([...seen]).toEqual(['body.warmth-changed.v1'])
+  })
+})
+
+describe('CLASS_OF_SERVER_CATEGORY', () => {
+  it('三个机制类别各对到一个桶, 而 fact 没有对应项', () => {
+    // fact 不在服务端那三类里 —— 它是那三类的**上游**, 所以它永远回落到前端那份。
+    expect(CLASS_OF_SERVER_CATEGORY.STATE_EFFECT).toBe('effect')
+    expect(CLASS_OF_SERVER_CATEGORY.SENSORY).toBe('sensory')
+    expect(CLASS_OF_SERVER_CATEGORY.SCHEDULED).toBe('schedule')
+    expect(CLASS_OF_SERVER_CATEGORY.fact).toBeUndefined()
+    expect(CLASS_OF_SERVER_CATEGORY.UNKNOWN_FOURTH_CLASS).toBeUndefined()
+  })
+
+  it('每个桶的中文名与服务端目录里的一致 —— 这两份曾经漂过', () => {
+    // 服务端 CoreEventCatalog.Category 的 label 现在是: 持续影响 / 实时感官 / 计划表。
+    // 这里断言的是**方向**: 漂了要改前端这张表去对齐服务端, 而不是反过来 ——
+    // 目录是这一类别的所有者。
+    expect(EVENT_CLASS_META[CLASS_OF_SERVER_CATEGORY.STATE_EFFECT!].label).toBe('持续影响')
+    expect(EVENT_CLASS_META[CLASS_OF_SERVER_CATEGORY.SENSORY!].label).toBe('实时感官')
+    expect(EVENT_CLASS_META[CLASS_OF_SERVER_CATEGORY.SCHEDULED!].label).toBe('计划表')
   })
 })

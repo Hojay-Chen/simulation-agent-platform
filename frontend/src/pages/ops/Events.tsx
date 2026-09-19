@@ -1,10 +1,12 @@
 import { useMemo, useState } from 'react'
 import { RefreshCw } from 'lucide-react'
-import { listWorldEvents, type WorldEventRow } from '@/api/client'
+import { getEventTypeCatalog, listWorldEvents, type WorldEventRow } from '@/api/client'
 import {
+  CLASS_OF_SERVER_CATEGORY,
   EVENT_CLASS_META,
   eventClassesOf,
   eventLabelZh,
+  reconcileCatalog,
   summarizePayload,
   type EventClass,
 } from '@/lib/events'
@@ -63,6 +65,9 @@ function Body() {
     [agentId],
   )
 
+  // 词汇表 —— 平台级的, 与 agentId 无关, 所以它不吃 agentId 这个依赖。
+  const catalog = useAsync(() => getEventTypeCatalog(), [])
+
   const [active, setActive] = useState<ReadonlySet<EventClass>>(() => new Set())
 
   const allRows = useMemo(() => toRows(world.data ?? [], agentId), [world.data, agentId])
@@ -70,6 +75,40 @@ function Body() {
   const counts = useMemo(() => tally(allRows), [allRows])
 
   const total = allRows.length
+
+  /**
+   * 这个窗口里的**观察到的类型**, 与目录里**登记过的类型**各是什么。
+   *
+   * 这是这一页上唯一一个真正的"对账": 一边随数据变, 一边随代码变, 而两者的差
+   * 是可以算出来的。`matched` 那个数是它的关键 —— 当它是 0, 说明这个流里的名字
+   * 与目录里的名字**根本不是同一套词汇**, 于是"哪几类从没发生过"这个问题今天
+   * 没有意义(全部 47 条都没发生过)。那一天它不再是 0 的时候, 这一块会自己换一个
+   * 说法, 不需要改代码。
+   */
+  const ledger = useMemo(
+    () => reconcileCatalog(catalog.data, allRows.map((r) => r.type)),
+    [catalog.data, allRows],
+  )
+
+  /**
+   * 服务端给的中文名, 按**界面类别**索引。
+   *
+   * 界面用的是四个桶(`fact` 是"还没进她感知的世界事实", 不是目录里的一类), 目录里
+   * 是三类。所以这张表只填能对上的三个 —— `fact` 没有对应项, 于是它回落到前端那份。
+   * 这不是将就: `fact` 本来就不属于那三类机制, 它是它们的**上游**。
+   */
+  const categoryText = useMemo(() => {
+    const m = new Map<EventClass, { label: string; note: string; count: number }>()
+    for (const c of catalog.data?.categories ?? []) {
+      const bucket = CLASS_OF_SERVER_CATEGORY[c.category]
+      if (bucket) m.set(bucket, { label: c.label, note: c.note, count: c.count })
+    }
+    return m
+  }, [catalog.data])
+
+  /** 类别的中文名: **服务端有的就用服务端的**。两者曾经漂过(`感官实时` vs `实时感官`)。 */
+  const serverLabel = (c: EventClass, fallback: string): string =>
+    categoryText.get(c)?.label ?? fallback
 
   return (
     <div className="space-y-5">
@@ -150,7 +189,7 @@ function Body() {
                         <span className={`mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full ${m.dot}`} aria-hidden="true" />
                         <span className="min-w-0">
                           <span className="flex items-baseline gap-2 text-xs">
-                            <span className={`font-medium ${m.text}`}>{m.label}</span>
+                            <span className={`font-medium ${m.text}`}>{serverLabel(c, m.label)}</span>
                             <span className="font-mono text-[10px] text-ink-faint tnum">{counts[c]}</span>
                             {off && <span className="text-[10px] text-ink-faint">已筛掉</span>}
                           </span>
@@ -256,20 +295,159 @@ function Body() {
                 到可查询存储的通道。
               </p>
             </GapNote>
-            <GapNote title="47 条事件目录没有读取面">
-              <p>
-                §5.4 的 `CoreEventCatalog` 是运行时注册的 47 条内建事件, 第三方还能随时
-                注册新的。而这一页只能显示"线上真的出现过的类型" —— 界面上那些标着
-                「未登记」的行就是目录里没有、译表也不认识的那些。
-              </p>
-              <p>
-                缺的端点: <code>GET /api/meta/event-types</code>。有了它才能反过来问
-                "哪几类事件从来没发生过" —— 那才是运维真正需要的一个问题。
-              </p>
-            </GapNote>
           </div>
         </Panel>
       </div>
+
+      <Panel title="词汇表: 这个世界能发生哪些事">
+        {catalog.loading && !catalog.data && <Empty>读取中…</Empty>}
+
+        {catalog.error && (
+          <p className="text-sm text-danger">
+            读不到词汇表: {describeError(catalog.error)}
+            <span className="mt-1 block text-[11px] leading-relaxed text-ink-faint">
+              它来自 <code>GET /api/meta/event-types</code>。读不到时这一块是空的 ——
+              而**事件流本身照常显示**, 两者没有依赖关系。
+            </span>
+          </p>
+        )}
+
+        {catalog.data && (
+          <div className="space-y-4">
+            <p className="text-xs leading-relaxed text-ink-soft">
+              目录里共 <span className="font-mono tnum">{catalog.data.count}</span> 条事件类型, 分布在{' '}
+              <span className="font-mono tnum">{catalog.data.namespaces.length}</span> 个命名空间里, 按机制分成三类。
+              第三方应用可以随时往注册表里加自己的类型 —— 所以这份清单是**运行时读来的**, 不是前端抄的。
+            </p>
+
+            <div className="grid gap-3 sm:grid-cols-3">
+              {catalog.data.categories.map((c) => (
+                <div key={c.category} className="rounded-lg border border-line px-3 py-2">
+                  <div className="flex items-baseline gap-2">
+                    <span className="text-xs font-medium text-ink">{c.label}</span>
+                    <span className="font-mono text-[10px] text-ink-faint">{c.category}</span>
+                    <span className="ml-auto font-mono text-sm text-ink tnum">{c.count}</span>
+                  </div>
+                  <p className="mt-1 text-[11px] leading-relaxed text-ink-faint">{c.note}</p>
+                </div>
+              ))}
+            </div>
+
+            {/*
+              没被认领的 —— 这是这份返回体里唯一一个"非空就说明有事"的字段,
+              所以它单独一块, 不和上面那三个统计数字混在一起。
+            */}
+            <div
+              className={`rounded-lg border px-3 py-2 ${
+                catalog.data.unclaimed.length > 0 ? 'border-cat-effect/40 bg-cat-effect/10' : 'border-line'
+              }`}
+            >
+              <p className="text-xs font-medium text-ink">
+                没有消费者的类型:{' '}
+                {catalog.data.unclaimed.length === 0 ? (
+                  <span className="font-normal text-ink-faint">没有 —— 每一条都有人接着</span>
+                ) : (
+                  <span className="font-mono tnum">{catalog.data.unclaimed.length}</span>
+                )}
+              </p>
+              {catalog.data.unclaimed.length > 0 ? (
+                <>
+                  <ul className="mt-1.5 space-y-0.5">
+                    {catalog.data.unclaimed.map((t) => (
+                      <li key={t} className="font-mono text-[11px] text-ink-soft">{t}</li>
+                    ))}
+                  </ul>
+                  <p className="mt-1.5 text-[11px] leading-relaxed text-ink-faint">
+                    一条登记了却没有消费者的事件, 要么是留给将来的, 要么是某个 handler
+                    的订阅键写错了。这两种情况在别处长得一模一样, 所以它由服务端算出来 ——
+                    四十几条逐条比对不该是人干的活。
+                  </p>
+                </>
+              ) : (
+                <p className="mt-1 text-[11px] leading-relaxed text-ink-faint">
+                  这是**健康状态**: 目录里每一条都有明确的消费者。
+                </p>
+              )}
+            </div>
+
+            {/*
+              对账。这一段是这一页唯一"用两份数据算出第三个事实"的地方 ——
+              它的说法随 `matchedCount` 变, 而那个数随数据变。
+            */}
+            <div className="rounded-lg border border-line px-3 py-2">
+              <p className="text-xs font-medium text-ink">目录与实际的对账</p>
+              {ledger.matchedCount === 0 ? (
+                <p className="mt-1 text-[11px] leading-relaxed text-ink-soft">
+                  这个窗口里有 <span className="font-mono tnum">{ledger.observedCount}</span> 种事件名,
+                  而它们**没有一条**属于上面这份目录 —— 两套词汇现在是分开的:
+                  目录用 `namespace.name.vN`(新的事件结构), 而这个流里跑的是
+                  `WorldEventType` 那几个大写名字(旧的认知链)。
+                </p>
+              ) : (
+                <>
+                  <p className="mt-1 text-[11px] leading-relaxed text-ink-soft">
+                    目录 {catalog.data.count} 条里, 这个窗口出现过{' '}
+                    <span className="font-mono tnum">{ledger.matchedCount}</span> 条;
+                    从没出现过的 <span className="font-mono tnum">{ledger.neverSeen.length}</span> 条。
+                  </p>
+                  <ul className="mt-1.5 space-y-0.5">
+                    {ledger.neverSeen.slice(0, 12).map((t) => (
+                      <li key={t.type} className="text-[11px] text-ink-faint">
+                        <span className="font-mono">{t.type}</span>
+                        {t.semantics ? <span className="ml-2">{t.semantics}</span> : null}
+                      </li>
+                    ))}
+                  </ul>
+                  {ledger.neverSeen.length > 12 && (
+                    <p className="mt-1 text-[11px] text-ink-faint">
+                      还有 {ledger.neverSeen.length - 12} 条没列出来。
+                    </p>
+                  )}
+                </>
+              )}
+              {ledger.outside.length > 0 && (
+                <p className="mt-2 text-[11px] leading-relaxed text-ink-faint">
+                  反过来, 这个流里有{' '}
+                  <span className="font-mono tnum">{ledger.outside.length}</span> 个名字不在目录里
+                  {ledger.matchedCount === 0 ? '(就是上面那些全部)' : ''} —— 它们不是"未登记的错误",
+                  只是另一套词汇。
+                </p>
+              )}
+              <p className="mt-2 text-[11px] leading-relaxed text-ink-faint">
+                这一段的两个数一个随代码变、一个随数据变, 所以它们是**各取一份、在这里对一次**的,
+                而不是服务端合成的一份 —— 那样会让"这个世界能发生什么"与"今天发生了什么"
+                互相污染。
+              </p>
+            </div>
+
+            <details className="rounded-lg border border-line px-3 py-2">
+              <summary className="cursor-pointer text-xs font-medium text-ink">
+                按命名空间看那 {catalog.data.namespaces.length} 族
+              </summary>
+              <div className="mt-2 space-y-2">
+                {catalog.data.namespaces.map((ns) => (
+                  <div key={ns.namespace}>
+                    <p className="font-mono text-[11px] text-ink-soft">
+                      {ns.namespace}.* <span className="text-ink-faint">({ns.count})</span>
+                    </p>
+                    <ul className="mt-0.5 space-y-0.5">
+                      {ns.types.map((t) => (
+                        <li key={t.type} className="text-[11px] leading-relaxed text-ink-faint">
+                          <span className="font-mono text-ink-soft">{t.name}</span>
+                          <span className="ml-2">{t.categoryLabel}</span>
+                          {t.channel ? <span className="ml-2">通道 {t.channel}</span> : null}
+                          {t.modality ? <span className="ml-2">感官 {t.modality}</span> : null}
+                          {!t.claimed ? <span className="ml-2 text-cat-effect">未认领</span> : null}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                ))}
+              </div>
+            </details>
+          </div>
+        )}
+      </Panel>
     </div>
   )
 }

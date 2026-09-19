@@ -84,6 +84,31 @@ export const EVENT_CLASS_META: Record<EventClass, EventClassMeta> = {
 }
 
 /**
+ * 服务端那三个机制类别 → 界面这四个桶。
+ *
+ * <h2>为什么是"三对四", 而不是一一对应</h2>
+ *
+ * 服务端 `CoreEventCatalog.Category` 有三类, 而界面有四个桶 —— 因为界面的 `fact`
+ * ("世界里发生了, 但她还不知道")**根本不在那三类里, 它是那三类的上游**。一条事件
+ * 先是世界的事实, 然后才可能成为持续影响、感官刺激或计划表上的一段时间。
+ *
+ * <p>所以这张表只有三行: `fact` 没有对应项, 它永远回落到前端那份。这不是将就,
+ * 而是那个多出来的桶本来就该自己待着。
+ *
+ * <h2>键为什么是字符串而不是类型</h2>
+ *
+ * 因为它们是**服务端发过来的字面量**, 与 `world_event.category` 那一列同词
+ * (`STATE_EFFECT` / `SENSORY` / `SCHEDULED`)。写成一个联合类型会让"服务端加了
+ * 第四类"变成一个 TypeScript 编译错误 —— 而那本该是一个界面上多一个未识别桶的事,
+ * 不该让整个前端构建失败。
+ */
+export const CLASS_OF_SERVER_CATEGORY: Record<string, EventClass | undefined> = {
+  STATE_EFFECT: 'effect',
+  SENSORY: 'sensory',
+  SCHEDULED: 'schedule',
+}
+
+/**
  * 类别 → 排序权重。
  *
  * 这是一个**展示用的**启发式, 不是后端的 urgency 字段 —— 后者是 §5.3.2 里
@@ -108,9 +133,17 @@ export function weightOf(classes: readonly EventClass[]): number {
  * 已知事件类型 → 类别。
  *
  * 键取自后端 `runtime/WorldEventType.java`(15 个值)。这是**线上的实际取值**, 不是
- * 设计文档 §5.4 那份 47 条的目录 —— 后者要等 `CoreEventCatalog` 长出 HTTP 面
- * (`GET /api/meta/event-types`, 目前没有)。两者不是一回事: 这一张是"今天真的会
- * 出现在列表里的字符串", 那一张是"这个世界里能发生哪些事"。
+ * 设计文档 §5.4 那份 47 条的目录 —— 后者住在 `CoreEventCatalog` 里, 用
+ * `namespace.name.vN` 那套词汇, 与这里的 15 个大写字符串**不是同一套**。
+ *
+ * <p>两者不是一回事, 也不是一个"迟早会合并"的东西: 这一张是"今天真的会出现在列表里
+ * 的字符串", 那一张是"这个世界里能发生哪些事"。**而它们今天没有交集** —— 目录已经有
+ * 了 HTTP 面(`GET /api/meta/event-types`, 见 `getEventTypeCatalog`), 于是这件事在
+ * 「事件流」页上是被**算出来**的, 而不是靠这句话说的: 那一块会报出"这个窗口里的名字
+ * 有几个属于目录", 而今天那个数是 0。
+ *
+ * <p>所以这张表还不能删。它能删的那一天, 是 `world_event` 那一行开始用目录的词汇
+ * 落库的那一天 —— 不是这个文件里任何一句注释说了算的。
  */
 const CLASS_OF_TYPE: Record<string, readonly EventClass[]> = {
   // ── 一条消息到她手里的五级台阶(V11 §6.3 的意识阶梯, V2.2 §2.3 的两端) ──
@@ -195,6 +228,62 @@ export function classifyFromServer(category: string | null | undefined): readonl
   // 认得出至少一个才算数 —— 否则回落到类型表, 而不是回一个空数组
   // (空数组在界面上会画成一条"没有类别"的事件, 那是个不存在的状态)。
   return out.length > 0 ? out : null
+}
+
+// ── 目录 × 实际 ─────────────────────────────────────────────────────────────
+
+/** 对账需要的目录最小形状 —— 只用到 `types`。写成结构类型是为了让 `lib/` 不依赖 `api/client.ts`。 */
+export interface CatalogLike<T extends { type: string }> {
+  types: readonly T[]
+}
+
+/** 目录与观察到的类型的对账结果。 */
+export interface CatalogLedger<T> {
+  /** 这个窗口里出现过几种**名字**(不是几条记录)。 */
+  observedCount: number
+  /** 目录里有多少条在这个窗口里出现过。 */
+  matchedCount: number
+  /** 目录里有、这个窗口里没有的。 */
+  neverSeen: T[]
+  /** 这个窗口里有、目录里没有的名字 —— 两套词汇并存时它等于全部。 */
+  outside: string[]
+}
+
+/**
+ * 把**目录**(随代码变)与**观察到的事件名**(随数据变)对一次账。
+ *
+ * <h2>为什么这件事必须在前端算, 而不是让服务端返回一个合并的结果</h2>
+ *
+ * 因为它要的输入来自两个不同的端点、两种不同的节奏: 目录是常量, 事件流是滚动窗口。
+ * 服务端把两者合成一份返回体的话, "这个世界能发生什么"与"今天发生了什么"就会在
+ * 同一条路由下互相污染 —— 缓存、分页、刷新频率全都不一样。
+ *
+ * <h2>`matchedCount === 0` 是这个函数最有价值的一个输出</h2>
+ *
+ * 在它之前, 界面上能说的只有"这一条事件的类型我不认识"。而 `matchedCount === 0`
+ * 说的是另一件事, 而且是**算出来的**: 这个流里的名字与目录里的名字根本不是同一套
+ * 词汇。它把"未知类型"从一个逐条的感受变成了一句可断言的结论 —— 而那一天这个数
+ * 不再是 0 的时候, 界面自己会换一个说法(见「事件流」页的用法), 不需要改代码。
+ *
+ * @param catalog       目录; 读不到时传 null —— 结果是"全部都在目录外", 而不是抛
+ * @param observedTypes 这个窗口里出现过的类型名; 重复的不重复计
+ */
+export function reconcileCatalog<T extends { type: string }>(
+  catalog: CatalogLike<T> | null | undefined,
+  observedTypes: Iterable<string>,
+): CatalogLedger<T> {
+  const observed = observedTypes instanceof Set ? observedTypes : new Set(observedTypes)
+  const catalogTypes = catalog?.types ?? []
+  const catalogNames = new Set(catalogTypes.map((t) => t.type))
+
+  const neverSeen = catalogTypes.filter((t) => !observed.has(t.type))
+
+  return {
+    observedCount: observed.size,
+    matchedCount: catalogTypes.length - neverSeen.length,
+    neverSeen,
+    outside: [...observed].filter((name) => !catalogNames.has(name)),
+  }
 }
 
 // ── 意识阶梯 ────────────────────────────────────────────────────────────────
