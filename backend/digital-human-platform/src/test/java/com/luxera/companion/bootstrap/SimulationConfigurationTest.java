@@ -11,6 +11,8 @@ import com.luxera.companion.persistence.store.WorldEventStore;
 import com.luxera.companion.persistence.store.WorldObjectStore;
 import com.luxera.companion.registry.DomainTypeRegistry;
 import com.luxera.companion.runtime.EnvironmentRefreshJob;
+import com.luxera.companion.runtime.LiveHumanRegistry;
+import com.luxera.companion.runtime.RecoveryRuntime;
 import com.luxera.companion.runtime.SimulationClock;
 import com.luxera.companion.runtime.WorldRuntime;
 import com.luxera.companion.world.World;
@@ -21,12 +23,15 @@ import org.springframework.beans.factory.NoSuchBeanDefinitionException;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.context.ApplicationContext;
+import org.springframework.context.ConfigurableApplicationContext;
 import org.springframework.test.context.ActiveProfiles;
 
 import java.time.Duration;
+import java.util.List;
 import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -89,6 +94,38 @@ class SimulationConfigurationTest {
     SimulationTick tick;
     @Autowired
     StartupSummary summary;
+    /**
+     * 恢复器 —— 第 7 步。
+     *
+     * <p>它值得被注入进这个类, 而不是"另起一个测试类去测它": 摘要里那三个数
+     * 是<b>从它这里拿的</b>, 而一个"摘要自己数一遍、恢复器自己数一遍"的实现
+     * 会让两处独立的零看起来与"恢复过了、什么也没有"一模一样。
+     * 这里注入它就是为了让那种分叉能被当场比出来。
+     */
+    @Autowired
+    RecoveryRuntime recovery;
+    /**
+     * 活着的她的登记处 —— 第 6 步的出口。
+     *
+     * <p>{@code AgentProfileProjector} 拿到的 {@code LiveHumanSource} 必须是它,
+     * 而不是 {@code LiveHumanSources.NONE}。那个区别在接口上完全看不出来
+     * (一个永远返回空的实现与一个真的登记处长得一样), 只能靠"两边同进同出"来钉。
+     */
+    @Autowired
+    LiveHumanRegistry live;
+    /**
+     * 直接读容器 —— 因为"第 7 步在第 8 步之前"是一条 <b>DI 边</b>, 而不是一行注释。
+     *
+     * <p>类型是 {@code ConfigurableApplicationContext} 而不是 {@code ApplicationContext}:
+     * 前者是后者的子接口, 而"读依赖图"的入口 {@code getBeanFactory()} 只在它上面。
+     * 这不是为了多要一点能力 —— 这个类只用它读一个方法。
+     *
+     * <p>名字叫 {@code container} 而不是 {@code context}, 是因为下面那个嵌套类
+     * ({@code 关掉的时候})自己也注入了一个 {@code context}。同名的内层字段会
+     * <b>遮住</b>外层字段, 而"这一句读的是哪一个"在源码上要靠数作用域才看得出来。
+     */
+    @Autowired
+    ConfigurableApplicationContext container;
     /** 直接拿库比数 —— 因为 startupSummary 里那个在册数是从这条路径来的。 */
     @Autowired
     AgentOwnershipRecordRepository ownership;
@@ -157,20 +194,10 @@ class SimulationConfigurationTest {
     // ─────────────────────── 第 4~6 步: 时钟、世界、运行时 ───────────────────────
 
     @Test
-    @DisplayName("世界是空的, 运行时也是空的 —— 而且它说出来了")
+    @DisplayName("世界与运行时都是空的, 而恢复那一段是真的")
     void 世界与运行时都是空的而且它说出来了() {
         assertNotNull(world);
         assertNotNull(runtime);
-        assertEquals(0, runtime.seatCount(), "此刻场景里不该有座位 —— 见下面那条断言");
-
-        // 这一条钉的是当前这一层的**真实状态**, 而不是一个期望。
-        // 它是故意的: 一个座位数为零的运行时与一个正常的运行时, 在任何一处计数上
-        // 都没有区别 —— 心跳照跳、计数照涨、日志照打"装配完成"。
-        // 所以"没有人"这件事必须被一个断言说出来, 于是等 §8.6.3 第 5/6 步落地时,
-        // 这里会红一次, 而那次红会逼着改它的人读一遍上面这句话。
-        assertEquals(0, runtime.seatCount(),
-                "场景里出现座位了 —— 那么 StartupSummary 的 Recovery 那一段也该跟着变成真的, "
-                        + "而不是 SimulationConfiguration 里写死的那四个零");
 
         assertEquals(registry.size(), summary.typeCount(),
                 "摘要里的类型数与注册表的实际大小不一致 —— 这行日志是运维看这一层的唯一入口");
@@ -191,6 +218,80 @@ class SimulationConfigurationTest {
         assertEquals(summary.unseatedAgents() > 0, summary.rosterWarning().isPresent(),
                 "rosterWarning() 该响的时候必须响、不该响的时候必须是空的 —— 实际: "
                         + summary.rosterWarning().orElse("(无)"));
+
+        // 恢复那一段不再是写死的零 —— 它必须来自刚才真的跑过的那一轮。
+        // 这一条钉的是"摘要里的数"与"恢复过程报的数"是同一个数: 它们曾经是
+        // 两处独立的零, 而那种零看起来与"恢复过了、什么也没有"一模一样。
+        assertEquals(recovery.report().ledgerEntries(), summary.recovery().ledgerEntries(),
+                "摘要里的账本条数与恢复过程报的不一致 —— 那说明其中一个不是从库里数出来的");
+        assertEquals(recovery.report().opaqueEntries(), summary.recovery().opaqueEntries());
+        assertEquals(recovery.refusals().size(), summary.recovery().refusedAgents(),
+                "被拒绝入座的人数与拒绝清单对不上 —— 摘要会报一个没有名字的数");
+
+        // 判据与告警同进同出, 与上面 rosterWarning 那条同一个形状。
+        assertEquals(summary.recovery().hasRefusals(), summary.recoveryWarning().isPresent(),
+                "recoveryWarning() 该响的时候必须响 —— 实际: "
+                        + summary.recoveryWarning().orElse("(无)"));
+    }
+
+    /**
+     * <b>§8.6.3 的"第 7 步在第 8 步之前"是一条 DI 边, 不是一条注释。</b>
+     *
+     * <h2>为什么这一条不能靠"读代码"来保证</h2>
+     * 那个顺序是本层唯一一个"错了会毁掉数据"的顺序 —— 恢复读的那一段世界历史
+     * 必须是<b>静止的</b>, 而心跳先起来的话它读的是一个移动的目标。
+     * 而 Spring 看不见它: 两个 bean 谁先被造出来取决于注册顺序,
+     * 于是"它们碰巧是对的"与"它们被保证是对的"在源码上长得一样。
+     *
+     * <p>所以这里读<b>容器自己的依赖图</b>, 而不是读源码 —— 问的是
+     * "Spring 认为造 {@code simulationTick} 之前必须先造谁"。有人删掉那个参数的话,
+     * 这条断言会红, 而它红的时候说的正是"你刚刚拆掉的是一条数据安全的边"。
+     *
+     * <h2>为什么还要断言"参数不是白传的"</h2>
+     * 因为一条"传进来但谁也不读"的参数会被 IDE 标成未使用, 而下一个清理未使用参数的人
+     * 会顺手删掉它 —— 于是那条边静默消失。{@code simulationTick} 里那句
+     * {@code Objects.requireNonNull} 就是为此存在的, 这里钉住它。
+     */
+    @Test
+    @DisplayName("恢复必须在心跳之前 —— 而且这是一条容器看得见的依赖")
+    void 恢复必须在心跳之前() {
+        // 先取成局部变量再断言, 而不是把那一串调用塞进断言里:
+        // 失败信息里要印的正是这个列表, 而"印出来的东西"与"比过的东西"
+        // 必须是同一次读取 —— 分开读两次的话, 打印时它可能已经变了。
+        List<String> 心跳的依赖 = List.of(
+                container.getBeanFactory().getDependenciesForBean("simulationTick"));
+        List<String> 恢复的依赖 = List.of(
+                container.getBeanFactory().getDependenciesForBean("recoveryRuntime"));
+
+        assertTrue(心跳的依赖.contains("recoveryRuntime"),
+                "心跳壳不再依赖恢复了 —— 那条 §8.6.3 的 DI 边被拆掉了。"
+                        + "依赖图里现在是: " + 心跳的依赖);
+
+        // 反方向也要成立: 恢复不该反过来依赖心跳壳, 那会成一个环,
+        // 而一个环意味着"谁先跑"重新变成一个注册顺序的偶然。
+        assertFalse(恢复的依赖.contains("simulationTick"),
+                "恢复依赖了心跳壳 —— 那是一个环, 而且它意味着恢复要在心跳起来之后才能跑。"
+                        + "恢复的依赖: " + 恢复的依赖);
+    }
+
+    @Test
+    @DisplayName("活着的她登记在 LiveHumanRegistry 里, 而不是一个永远为假的投影")
+    void 活着的她登记在登记处里() {
+        // 这一条钉的是"第 5/6 步真的接上了"这件事的**接线**那一半:
+        // AgentProfileProjector 拿到的 LiveHumanSource 必须是这个登记处,
+        // 而不是 LiveHumanSources.NONE。它不看库里有没有人 —— 那个由下面
+        // 「装进来的人与座位数一一对应」那一条负责。
+        assertNotNull(live);
+        assertEquals(runtime.seatCount(), live.size(),
+                "座位表上有 " + runtime.seatCount() + " 个她, 而登记处里有 " + live.size()
+                        + " 个 —— 两边必须同进同出: 装进座位的那一刻就该登记, "
+                        + "否则控制台查不到她(见 LiveHumanRegistry 的说明)");
+
+        for (String humanId : runtime.humanIds()) {
+            assertNotNull(live.contextOf(humanId),
+                    humanId + " 在座位表上却不在登记处里 —— 控制台会以为她不在这台机器上");
+            assertTrue(live.humanIds().contains(humanId), humanId);
+        }
     }
 
     @Test

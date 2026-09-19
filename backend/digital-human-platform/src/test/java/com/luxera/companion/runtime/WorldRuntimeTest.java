@@ -60,6 +60,17 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * 造一个真的她需要身体/生活/认知三块都装配起来, 这在本仓是**第一次**
  * ({@code new Human(...)} 此前没有任何调用点), 所以这个夹具本身也有价值:
  * 它顺带证明了 §3.1 的装配守卫是能通过的, 而不只是会拦人。
+ *
+ * <h2>这个夹具曾经漏了一行, 而且漏得完全没有症状</h2>
+ * 它的 {@code Seat} 一开始<b>没有</b>调 {@code body.registerOn(fabric)} ——
+ * 于是 {@code ThresholdDetector} 从来不在 tick 链上, 而她永远不觉得冷。
+ * 本类一直是绿的, 因为它测的是计划表与座位的接线, 身体在它那里不参与;
+ * 而那个缺口在别处也不会有症状: {@code Human.acceptClockTicked} 自己会调
+ * {@code body.advance}, 所以她的状态照样前进、心跳照样每拍成功。
+ *
+ * <p>现在 {@code Human} 的构造器会当场拦住它({@code requireBodyOnTheBus}),
+ * 于是那一行是<b>被守卫逼出来的</b>, 不再是"照抄时要记得带上的一步"。
+ * 这也是它值得留在这里的原因: 它是本仓第一处被那道守卫抓到的真实遗漏。
  */
 class WorldRuntimeTest {
 
@@ -100,6 +111,12 @@ class WorldRuntimeTest {
             this.who = who;
             this.body = new Body(who);
             this.fabric = new DefaultEventFabric(who, new EventHandlerRegistry());
+            // 把身体接到总线上 —— Body(order 10) 与 ThresholdDetector(order 20) 由此进入 tick 链。
+            // 这一行此前是漏的, 而本类一直是绿的: 它测的是计划表与座位的接线, 身体不参与,
+            // 而**漏掉它不会有任何症状**(状态照样推进、心跳照样成功, 消失的只有感官)。
+            // 现在漏掉它会在 Human 的构造器那里当场抛 —— 所以这一行不是"补个形式",
+            // 是这道守卫逼出来的第一处真实修复。
+            this.body.registerOn(fabric);
             this.life = new Life(who, fabric, PlanningContext.HumanSnapshot::unknown);
             this.relationships = RelationshipGraph.bootstrap(
                     PersonaSpec.neutral("阿澈"), ChatAccountId.of("account-owner"), T);

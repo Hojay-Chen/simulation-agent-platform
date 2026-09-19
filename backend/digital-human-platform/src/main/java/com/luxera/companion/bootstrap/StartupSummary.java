@@ -47,6 +47,13 @@ import java.util.Optional;
  *         {@code OpaqueEffect}), 但"她为什么冷"这类问题会永远失去答案</td>
  *   </tr>
  *   <tr>
+ *     <td>{@link Recovery#refusedAgents}</td>
+ *     <td>有没有人<b>整个不在</b></td>
+ *     <td>非零 → 有 agent 的历史读得回来却装不回去, 恢复器主动拒绝了它的座位
+ *         (见 {@code RecoveryRuntime})。它比替身重一档: 替身失去的是<b>解释</b>,
+ *         拒绝失去的是<b>这个人</b> —— 心跳里根本没有她</td>
+ *   </tr>
+ *   <tr>
  *     <td>{@link #tickMs}</td>
  *     <td>仿真跑多快</td>
  *     <td>与配置不符 → 生产与测试跑的不是同一套参数</td>
@@ -59,11 +66,12 @@ import java.util.Optional;
  *   </tr>
  * </table>
  *
- * <p><b>{@code opaqueEntries} 是这几个里唯一一个"不该出现在生产日志里"的数。</b>
- * 其余几个正常时各有一个合理的取值, 只有它在健康状态下必须是 <b>0</b> ——
- * 所以它被单独放在 {@link Recovery} 里, 而不是与"类型数"平铺在一起。
+ * <p><b>{@code opaqueEntries} 与 {@code refusedAgents} 是这几个里仅有的两个
+ * "不该出现在生产日志里"的数。</b> 其余几个正常时各有一个合理的取值,
+ * 只有它们在健康状态下必须是 <b>0</b> ——
+ * 所以它们被单独放在 {@link Recovery} 里, 而不是与"类型数"平铺在一起。
  * 一个平铺的列表会让读者以为它们是同一类量, 而它们不是:
- * 那几个是<b>描述</b>, 这一个是<b>警告</b>。
+ * 那几个是<b>描述</b>, 这两个是<b>警告</b>。
  *
  * <h2>{@link #humanCount} 一个人都回答不了"是不是有人"</h2>
  *
@@ -173,19 +181,26 @@ public record StartupSummary(
      * 就是"恢复必须在 tick 壳之前跑完")。一个可空的 {@code Recovery} 会让这两件事
      * 在日志上都印成"没有恢复数据"—— 而那正是最难查的一类: 分不清"没有"与"没做"。
      *
-     * @param ledgerEntries 账本恢复了多少条(含已失效的)
-     * @param opaqueEntries 其中有多少条只能以替身重建 —— <b>健康状态必须是 0</b>
-     * @param planItems     计划表恢复了多少项(跨全部版本之后当前那一版)
-     * @param historyDays   世界历史覆盖了多少天(不是"多少条" —— 条数与时间跨度
-     *                      是两个不同的问题, 而"她记得多久以前的事"问的是后者)
+     * @param ledgerEntries  账本恢复了多少条(含已失效的)
+     * @param opaqueEntries  其中有多少条只能以替身重建 —— <b>健康状态必须是 0</b>
+     * @param planItems      计划表恢复了多少项(跨全部版本之后当前那一版)
+     * @param historyDays    世界历史覆盖了多少天(不是"多少条" —— 条数与时间跨度
+     *                       是两个不同的问题, 而"她记得多久以前的事"问的是后者)
+     * @param refusedAgents  有多少个 agent <b>该跑而没被给座位</b>, 因为她有一份
+     *                       读得回来却装不回去的历史({@code RecoveryRuntime.Refusal})。
+     *                       健康状态是 0, 而它与 {@link #opaqueEntries} 是<b>两种不同的坏</b>:
+     *                       替身意味着"有一条影响的解释丢了", 拒绝意味着
+     *                       "<b>一个人整个不在了</b>"
      */
-    public record Recovery(long ledgerEntries, long opaqueEntries, int planItems, int historyDays) {
+    public record Recovery(long ledgerEntries, long opaqueEntries, int planItems, int historyDays,
+                           int refusedAgents) {
 
         public Recovery {
-            if (ledgerEntries < 0 || opaqueEntries < 0 || planItems < 0 || historyDays < 0) {
+            if (ledgerEntries < 0 || opaqueEntries < 0 || planItems < 0 || historyDays < 0
+                    || refusedAgents < 0) {
                 throw new IllegalArgumentException("恢复计数不能是负数: 账本 " + ledgerEntries
                         + ", 替身 " + opaqueEntries + ", 计划 " + planItems
-                        + ", 历史天数 " + historyDays);
+                        + ", 历史天数 " + historyDays + ", 拒绝 " + refusedAgents);
             }
             if (opaqueEntries > ledgerEntries) {
                 throw new IllegalArgumentException("替身数(" + opaqueEntries
@@ -194,9 +209,21 @@ public record StartupSummary(
             }
         }
 
-        /** 有没有读不回来的东西 —— 这是本对象唯一一个"健康状态为假"的判据。 */
+        /** 有没有读不回来的东西 —— 有一条影响失去了它的解释。 */
         public boolean hasOpaqueEntries() {
             return opaqueEntries > 0;
+        }
+
+        /**
+         * 有没有人因为"装不回去"而整个缺席。
+         *
+         * <p>它与 {@link #hasOpaqueEntries()} 分开, 因为两者的处置完全不同:
+         * 替身是<b>可以带着继续跑的</b>(数值还在, 只是原因没了), 而拒绝是
+         * <b>她整个人不在这台机器上</b> —— 心跳里没有她, 她这一天不存在。
+         * 混成一个"恢复有问题"的布尔, 会让最严重的那一种被最轻的那一种稀释掉。
+         */
+        public boolean hasRefusals() {
+            return refusedAgents > 0;
         }
     }
 
@@ -213,7 +240,37 @@ public record StartupSummary(
                 + " / 恢复: 账本 " + recovery.ledgerEntries() + " 条("
                 + recovery.opaqueEntries() + " 条替身)、计划 " + recovery.planItems() + " 项、"
                 + "世界历史 " + recovery.historyDays() + " 天"
+                + "、拒绝入座 " + recovery.refusedAgents() + " 个"
                 + " / tick 间隔 " + tickMs + "ms";
+    }
+
+    /**
+     * "有人因为她那份历史装不回去而整个不在"的告警 —— 没有话要说时返回空,
+     * 形状与 {@link #conflictWarning()} / {@link #rosterWarning()} 一致。
+     *
+     * <h2>它为什么与 {@link #rosterWarning()} 是两条, 而不是一条</h2>
+     * 两者都让"该跑的人没有座位", 但原因在装配层的<b>不同位置</b>:
+     * <pre>
+     *   rosterWarning()   库里有 runnable 的人, 而装配层从来没去装 → 第 5/6 步没接上
+     *   recoveryWarning() 装配层去装了, 而<b>拒绝</b>了其中一些   → 第 7 步判定装不回去
+     * </pre>
+     * 前者是一个<b>缺口</b>(有人忘了接线), 后者是一个<b>拒绝</b>(有人判断了不该装)。
+     * 一条把两者合起来的告警会让"恢复器主动拒绝了 3 个"读成"装配层漏了 3 个" ——
+     * 而修它们要做的事完全相反: 前者要接线, 后者要补一个装载入口。
+     *
+     * <p>细节(谁、为什么)由 {@code RecoveryRuntime} 逐个打 WARN, 这里只报<b>个数</b> ——
+     * 因为这一行日志的读者是"扫一眼启动有没有问题"的人, 而想追细节的人有
+     * {@code RecoveryRuntime.refusals()} 那一张表。
+     */
+    public Optional<String> recoveryWarning() {
+        if (!recovery.hasRefusals()) {
+            return Optional.empty();
+        }
+        return Optional.of("[Sim] 有 " + recovery.refusedAgents() + " 个 agent 该跑却被拒绝入座 —— "
+                + "不是装配层漏了人, 是恢复判定它们的历史装不回去: 库里那几张表读得回来, "
+                + "而内存里没有对应的装载入口, 装进来只会得到一张空表。"
+                + "拒绝是刻意的(§8.5.6: 读不回来的行不许丢), 所以此刻它们整个人不在心跳里。"
+                + "逐个的理由见上面每一条 WARN, 或 RecoveryRuntime.refusals()");
     }
 
     /**

@@ -86,6 +86,49 @@ public final class Human {
         this.fabric = Objects.requireNonNull(fabric, "Human 必须有 EventFabric —— "
                 + "它是世界到她的唯一一条路(另一条是 ActionFabric, 由 HumanActor 持有)");
         requireSamePerson();
+        requireBodyOnTheBus();
+    }
+
+    /**
+     * 她的身体必须<b>已经接到这条总线上</b> —— {@code body.registerOn(fabric)} 被调过。
+     *
+     * <h2>为什么这条检查必须存在: 它是本层唯一一个"连症状都没有"的装配错误</h2>
+     * 上面那两条守卫挡住的错误各有症状(她的决定不影响行为 / 她记得没发生过的事),
+     * 而这一条挡住的那个<b>什么症状都没有</b>:
+     *
+     * <pre>
+     *   body.registerOn(fabric) 没有被调用
+     *     → fabric 的 tick 链上只有 0 个 handler
+     *     → fabric.tick(now, ctx) 在一张空链上正常返回 (TickReport.tickHandlers() == 0)
+     *     → Human.acceptClockTicked 仍然自己调 body.advance(...)
+     *       ★ 所以她的状态<b>照样</b>推进, lastTickAt 照样前进, hasTicked() 照样为真
+     *     → ThresholdDetector 不在链上, 于是<b>一条感官刺激都产不出来</b>
+     *     → 她永远不冷、不饿、不累、不觉得疼
+     * </pre>
+     *
+     * <p>最后一行是全部后果, 而它没有任何一个计数会体现出来: 心跳每拍都成功、
+     * 座位数与花名册一致、她的面板上每一个数都是正常的。这不是"她有点不对",
+     * 是<b>她这个人没有感官</b>, 而系统认为她很健康。
+     *
+     * <h2>为什么这一条特别值得注意</h2>
+     * 因为 {@code body.advance} 被 {@link #acceptClockTicked} 直接调用, 这既是
+     * 上面那个"状态照样推进"的原因, 也是<b>为什么这条错误能活这么久</b>:
+     * 一个只看"她有没有被推进"的人会得到肯定的答案。本仓此前唯一一处完整的装配
+     * ({@code WorldRuntimeTest} 的座位夹具)就漏了这一行, 而它一直是绿的。
+     *
+     * <p>这一条与上面两条是同一类错误的第四个战场, 三个守卫的形状相同:
+     * <b>把"只写在装配者脑子里"的约定搬到构造器里, 让它当场炸。</b>
+     */
+    private void requireBodyOnTheBus() {
+        if (!body.isWiredTo(fabric)) {
+            throw new IllegalArgumentException("装配错了: 这个 Human 是 " + id.value()
+                    + ", 但它的 Body 没有接到它的 EventFabric 上 —— "
+                    + "缺少一次 body.registerOn(fabric)。"
+                    + "后果不会以任何计数或异常显形: 她的状态照样被推进(acceptClockTicked 自己会调 "
+                    + "body.advance), 心跳照样每拍成功, 而 ThresholdDetector 不在 tick 链上 —— "
+                    + "于是她永远不冷、不饿、不累, 一条感官刺激都产不出来。"
+                    + "装配时请把同一个 fabric 交给 body.registerOn(...) 与 Human 的构造参数。");
+        }
     }
 
     /**

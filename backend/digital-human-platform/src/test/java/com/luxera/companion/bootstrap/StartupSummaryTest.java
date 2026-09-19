@@ -33,7 +33,7 @@ class StartupSummaryTest {
     private static final Roster NO_AGENTS = new Roster(0, 0);
 
     private static Recovery healthy() {
-        return new Recovery(12, 0, 8, 3);
+        return new Recovery(12, 0, 8, 3, 0);
     }
 
     @Test
@@ -54,6 +54,7 @@ class StartupSummaryTest {
         assertTrue(line.contains("在册 0 个 agent(应当跑 0 个)"), line);
         assertTrue(line.contains("账本 12 条"), line);
         assertTrue(line.contains("0 条替身"), line);
+        assertTrue(line.contains("拒绝入座 0 个"), line);
         assertTrue(line.contains("计划 8 项"), line);
         assertTrue(line.contains("世界历史 3 天"), line);
         assertTrue(line.contains("tick 间隔 1000ms"), line);
@@ -67,7 +68,7 @@ class StartupSummaryTest {
     void 替身数非零时摘要照样印得出来_但判据为真() {
         // 这是"有一批历史只能以替身重建"的样子: 数值上可能全对, 但解释丢了。
         // 摘要不该因为这件事而拒印 —— 恰恰相反, 它必须在场, 否则运维看不到它。
-        Recovery damaged = new Recovery(12, 3, 8, 3);
+        Recovery damaged = new Recovery(12, 3, 8, 3, 0);
         StartupSummary summary = new StartupSummary(47, 7, List.of(), 1, 1, NO_AGENTS, damaged, 1000L);
 
         assertTrue(summary.recovery().hasOpaqueEntries(),
@@ -83,16 +84,61 @@ class StartupSummaryTest {
         // 而那样印出来的摘要会让人以为"有 5 条读不回来"而账本只有 3 条 ——
         // 一个自相矛盾的数字比没有数字更坏。
         assertThrows(IllegalArgumentException.class,
-                () -> new Recovery(3, 5, 0, 0),
+                () -> new Recovery(3, 5, 0, 0, 0),
                 "替身多于总数时必须当场拒绝, 而不是印一行自相矛盾的摘要");
     }
 
     @Test
     void 恢复计数不能是负数() {
-        assertThrows(IllegalArgumentException.class, () -> new Recovery(-1, 0, 0, 0));
-        assertThrows(IllegalArgumentException.class, () -> new Recovery(0, -1, 0, 0));
-        assertThrows(IllegalArgumentException.class, () -> new Recovery(0, 0, -1, 0));
-        assertThrows(IllegalArgumentException.class, () -> new Recovery(0, 0, 0, -1));
+        assertThrows(IllegalArgumentException.class, () -> new Recovery(-1, 0, 0, 0, 0));
+        assertThrows(IllegalArgumentException.class, () -> new Recovery(0, -1, 0, 0, 0));
+        assertThrows(IllegalArgumentException.class, () -> new Recovery(0, 0, -1, 0, 0));
+        assertThrows(IllegalArgumentException.class, () -> new Recovery(0, 0, 0, -1, 0));
+        assertThrows(IllegalArgumentException.class, () -> new Recovery(0, 0, 0, 0, -1));
+    }
+
+    // ─────────────────── 恢复那一侧: 替身与拒绝是两种不同的坏 ───────────────────
+
+    @Test
+    void 被拒绝入座的人数在摘要里说出来() {
+        // 拒绝是恢复器**主动**的决定(§8.5.6: 读不回来的行不许丢), 而它的后果
+        // 与替身不是一回事: 替身失去的是**解释**, 拒绝失去的是**这个人**。
+        StartupSummary summary = new StartupSummary(
+                47, 7, List.of(), 1, 0, new Roster(3, 3), new Recovery(12, 0, 0, 0, 2), 1000L);
+
+        assertTrue(summary.recovery().hasRefusals(),
+                "2 个被拒绝入座必须让判据为真 —— 它比替身重一档");
+        assertFalse(summary.recovery().hasOpaqueEntries(),
+                "这一份里一条替身都没有 —— 两个判据必须各管各的, 不能互相点燃");
+        assertTrue(summary.describe().contains("拒绝入座 2 个"), summary.describe());
+    }
+
+    @Test
+    void 拒绝告警与花名册告警是两条() {
+        // 两者都让"该跑的人没有座位", 而原因在装配层的不同位置:
+        //   rosterWarning()   装配层从来没去装 → 第 5/6 步没接上, 是一次**遗漏**
+        //   recoveryWarning() 装配层去装了而**拒绝**了 → 第 7 步的判定, 是一次**拒绝**
+        // 修它们要做的事完全相反(接线 / 补一个装载入口), 所以不能合成一条。
+        StartupSummary summary = new StartupSummary(
+                47, 7, List.of(), 1, 0, new Roster(3, 3), new Recovery(12, 0, 0, 0, 2), 1000L);
+
+        String warned = summary.recoveryWarning().orElseThrow(
+                () -> new AssertionError("有 2 个被拒绝入座, 告警不该是空的"));
+
+        assertTrue(warned.contains("2 个 agent"), warned);
+        // 必须与"装配层漏了人"分开说 —— 否则读的人会去查接线, 而那里没有问题。
+        assertTrue(warned.contains("不是装配层漏了人"), warned);
+        // 并且要说清后果: 它们整个人不在心跳里, 不是"数值有点不对"。
+        assertTrue(warned.contains("不在心跳里"), warned);
+    }
+
+    @Test
+    void 没有人被拒绝时不打告警() {
+        StartupSummary summary = new StartupSummary(
+                47, 7, List.of(), 1, 1, new Roster(1, 1), healthy(), 1000L);
+
+        assertTrue(summary.recoveryWarning().isEmpty(),
+                "没有拒绝时必须是空的 —— 调用方写 ifPresent(log::warn) 才是全部");
     }
 
     @Test

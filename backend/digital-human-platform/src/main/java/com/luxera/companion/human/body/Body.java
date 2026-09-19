@@ -215,6 +215,29 @@ public final class Body implements EventHandler<WorldEvent>, TickAware {
         eventFabric.subscribe(detector);
     }
 
+    /**
+     * 这条总线是不是<b>就是</b>她已经接上的那一条。
+     *
+     * <h2>这个方法存在的唯一理由: 让 {@code Human} 的装配守卫问得出来</h2>
+     * 漏掉 {@link #registerOn} 是本层最隐蔽的一种装配错误 —— 它<b>不抛异常、
+     * 不打日志、不影响任何计数</b>, 因为 {@code Human.acceptClockTicked} 会
+     * <b>自己</b>调 {@link #advance}(所以状态照样推进、{@code lastTickAt} 照样前进),
+     * 而 {@code fabric.tick} 只是在一张空处理器链上正常返回。
+     * 真正消失的是 {@link ThresholdDetector} —— 它不在链上, 于是
+     * <b>一条感官刺激都产不出来</b>: 她永远不冷、不饿、不累。
+     *
+     * <p>外面看不出来, 所以这个事实必须能在装配那一刻被问一次。
+     * 用 {@code ==} 而不是 {@code equals}: 这里要的正是同一个对象 ——
+     * 一个按值相等的比较会让"接在 A 总线上、装进 B 总线"通过检查,
+     * 而那时候 tick 链上跑的仍然不是她。
+     *
+     * <p>返回布尔而不是抛异常: 判断"这样装对不对"是装配者的事
+     * ({@code Human} 的构造器), 身体只回答事实。
+     */
+    public boolean isWiredTo(EventFabric eventFabric) {
+        return this.fabric == eventFabric;
+    }
+
     private EventFabric fabricOrFail(String operation) {
         if (fabric == null) {
             throw new IllegalStateException(

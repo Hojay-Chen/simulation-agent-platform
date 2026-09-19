@@ -1,5 +1,7 @@
 package com.luxera.companion.bootstrap;
 
+import com.luxera.companion.boundary.action.ActionFabric;
+import com.luxera.companion.boundary.action.DefaultActionFabric;
 import com.luxera.companion.boundary.event.ContinuousEffectLedger;
 import com.luxera.companion.persistence.DomainPayloadCodec;
 import com.luxera.companion.persistence.repository.ActionCommandRecordRepository;
@@ -24,11 +26,14 @@ import com.luxera.companion.persistence.store.PlanStore;
 import com.luxera.companion.persistence.store.StimulusReplayStore;
 import com.luxera.companion.persistence.store.WorldEventStore;
 import com.luxera.companion.persistence.store.WorldObjectStore;
+import com.luxera.companion.registry.CapabilityRegistry;
 import com.luxera.companion.registry.DomainTypeRegistry;
 import com.luxera.companion.runtime.AgentProfileProjector;
 import com.luxera.companion.runtime.AgentRegistry;
 import com.luxera.companion.runtime.EnvironmentRefreshJob;
+import com.luxera.companion.runtime.LiveHumanRegistry;
 import com.luxera.companion.runtime.LiveHumanSource;
+import com.luxera.companion.runtime.RecoveryRuntime;
 import com.luxera.companion.runtime.SimulationClock;
 import com.luxera.companion.runtime.WorldRuntime;
 import com.luxera.companion.world.World;
@@ -80,23 +85,36 @@ import java.util.List;
  * 必须是一个显式打开的组件</b> —— 因为"它安静地不在跑"和"它安静地在跑但什么也没发生"
  * 在日志里长得一模一样。
  *
- * <h2>这个类还<b>没有</b>做什么(以及为什么现在不做)</h2>
+ * <h2>这个类<b>做到</b>哪一步了</h2>
  *
- * §8.6.3 的第 5/6 步 —— <b>把应当跑的 agent 物化成 {@code Human} 聚合, 装进座位表</b>
- * —— 依赖一份"这个世界里有哪些人"的来源。那份来源本身已经落地了
- * ({@link AgentRegistry}, §3.6.8/§8.5.7), 所以今天这个类<b>知道</b>库里有哪些人、
- * 谁应当跑; 缺的是把那个名单变成内存里的她。
+ * §8.6.3 的九步里, 第 1–8 步都落地了, 其中第 5/6/7 步合在
+ * {@link #recoveryRuntime} 一个 bean 里(理由见那里)。于是
+ * "<b>库里有几个 agent</b>"与"<b>这台机器上坐着几个她</b>"第一次可能不相等 ——
+ * 而它们不相等的每一种原因都有一条自己的读面:
  *
- * <p>这里刻意<b>不</b>先物化几个充数: 一个"看起来装了人"的装配层会让人以为她已经活着,
- * 而她的座位上其实一个人都没有。第 7 步(恢复)同理会把历史读回来 ——
- * 在一个还没装上人的世界上跑恢复, 恢复出来的是零条, 而那个零会与
- * "她确实没有历史"印成同一行。
+ * <pre>
+ *   库里没人                  → 座位 0。正常, 不打告警;
+ *   库里有, 应当跑, 座位 0    → 装配缺口, rosterWarning();
+ *   应当跑而被恢复拒绝入座     → 恢复的判定, recoveryWarning() 与 RecoveryRuntime.refusals();
+ *   账本里有读不回来的行       → Recovery.hasOpaqueEntries()
+ * </pre>
  *
- * <p>所以当前 {@link StartupSummary} 打印的那一行里有两个数会同时出现:
- * {@code 0 个 Human} 与 {@code 在册 N 个 agent(应当跑 M 个)}。它们一起才说明问题 ——
- * 光看前面那个 0, 分不出"库里还没有人"与"有人而没被装进来"。
- * 那不是故障, 那是一个状态 —— 而它是被<b>打印出来</b>的状态,
- * 不是需要人去猜的状态(见 {@link StartupSummary#rosterWarning()})。
+ * <p>这四条是四个数, 不是一句"人少了"。前三条都让座位数变小, 而修它们要做的事
+ * 完全不同(接线 / 补装载入口 / 补类型注册), 所以它们从一开始就必须分得开。
+ *
+ * <h2>这个类还<b>没有</b>做什么</h2>
+ *
+ * 第 9 步的环境刷新是接了但上游没通的(缺省 sink 返回空列表, 每一轮记一次<b>跳过</b>);
+ * 而恢复那一侧有三处是空的, 各自的理由写在 {@link RecoveryRuntime} 的类注释那张表里
+ * —— 其中 ② 与 ④ 是"读得回来却装不回去"与"两端都还没定下来", ③ 是"记忆根本没有
+ * 持久化, 所以那个处境不可能出现"。三处都没有被伪装成正常数据。
+ *
+ * <p><b>没有生产者, 所以世界是空的</b>: {@code WorldEventStore.append}、
+ * {@code PlanStore.appendRevision}、{@code ActivityStore.append} 三处全仓没有一个
+ * 生产调用者(见 {@code RecoveryRuntime} 的注释)。这意味着今天启动之后
+ * <b>她会坐在座位上, 而世界无事发生</b> —— 心跳照跳、账本恒空、计划表恒空。
+ * 这不是装配的缺陷, 是下一批生产者的活; 而它必须被说出来,
+ * 因为"她安静地坐着"与"她坏了"在面板上是同一个样子。
  */
 @Slf4j
 @Configuration
@@ -241,27 +259,45 @@ public class SimulationConfiguration {
         return clock;
     }
 
-    // ─────────────── 第 5/6 步的来源: 花名册 ───────────────
+    // ─────────────── 第 5/6 步的来源: 花名册与她在这台机器上的位置 ───────────────
+
+    /**
+     * <b>活着的她在哪</b> —— {@link LiveHumanSource} 的那个实现, 第 5/6 步之前它一直是
+     * {@link LiveHumanSource#NONE}。
+     *
+     * <h2>为什么它必须是可变的, 而不是在装配时就算好</h2>
+     * 因为 {@code AgentProfileProjector} 要靠它回答"她在这台机器上吗", 而
+     * {@code AgentRegistry} 要靠那个投影才造得出来, 而装人的人又要靠
+     * {@code AgentRegistry} 才知道该装谁。三者构成一个环, 而把环拉直的唯一办法
+     * 是让其中一环<b>先存在、后填充</b>: 登记处先造出来(空的), 装配过程往里写,
+     * 投影从里读。写成 {@code LiveHumanSource} 的另一个不可变实现就必然成环。
+     *
+     * <p>它的时刻来自那个唯一的 {@link SimulationClock} —— 见
+     * {@link LiveHumanRegistry} 关于"为什么不调 {@code Human.context()}"的说明。
+     */
+    @Bean
+    public LiveHumanRegistry liveHumanRegistry(SimulationClock clock) {
+        return new LiveHumanRegistry(clock);
+    }
 
     /**
      * 把归属行、身份行、聊天账号绑定拼成一份档案 —— <b>不落库</b>(§3.6.7)。
      *
-     * <h2>为什么 {@code live} 现在传的是 {@link LiveHumanSource#NONE}</h2>
-     * 因为那是此刻的<b>事实</b>, 而不是一个待补的空实现: 在下面两步把第一批
-     * {@code Human} 装进座位表之前, 对每一个 {@code humanId} 的诚实回答都是
-     * "她不在这台机器上"。它由此出现在档案的 {@code materialized() == false} 上,
-     * 而不是伪装成"她的身体各项是 0"。
+     * <p>它拿的 {@code live} 就是上面那个登记处, 于是档案上那句
+     * {@code materialized()} 从"永远为假"变成了<b>跟着座位表走的事实</b>:
+     * 装进来的人为真、没装进来的为假。这正是 §3.6.7 要的 ——
+     * 一个"看起来活着、身体各项是 0"的档案比一个说"她不在这台机器上"的档案坏得多。
      *
-     * <p>第 5/6 步落地时, 换成实现的地方<b>就在这个类里</b> —— 因为活着的那些
-     * {@code Human} 的引用本来就归装配层持有({@code HumanActor} 刻意不暴露它持有的
-     * 那一个, 见 {@code LiveHumanSource} 的类注释)。所以这里<b>不</b>用
-     * {@code ObjectProvider} 去问容器要一个: 那会让读者以为外面已经有一个生产实现
-     * 可以盖过它, 而那是假的。{@code sinkOrDefault} 用 {@code ObjectProvider} 是因为
-     * 环境数据源真有一个可能来自三方的实现(§6), 这里没有。
+     * <p>这里<b>不</b>用 {@code ObjectProvider} 去问容器要一个 {@code LiveHumanSource}:
+     * 那会让读者以为外面已经有一个实现可以盖过它, 而活着的 {@code Human} 的引用
+     * 本来就归装配层持有({@code HumanActor} 刻意不暴露它持有的那一个),
+     * 所以外面<b>不可能</b>有第二个实现是合理的。{@code sinkOrDefault} 用
+     * {@code ObjectProvider} 是因为环境数据源真有一个可能来自三方的实现(§6), 这里没有。
      */
     @Bean
-    public AgentProfileProjector agentProfileProjector(ConversationAccountBindingRecordRepository bindings) {
-        return new AgentProfileProjector(bindings, LiveHumanSource.NONE);
+    public AgentProfileProjector agentProfileProjector(ConversationAccountBindingRecordRepository bindings,
+                                                       LiveHumanRegistry live) {
+        return new AgentProfileProjector(bindings, live);
     }
 
     /**
@@ -302,6 +338,27 @@ public class SimulationConfiguration {
     @Bean
     public World world() {
         return new World();
+    }
+
+    /**
+     * 动作出口 —— 她的决定从这里走出去, 而<b>数字设备世界的能力就挂在这里</b>。
+     *
+     * <h2>为什么它全机一个, 而不是每个人一个</h2>
+     * 因为能力表回答的是"这个世界里能被触发的东西有哪些"(§2 的接口、以及用户所要求的
+     * "暴露成 skill/tool/MCP"), 而<b>世界只有一个</b>。人手一份能力表会让
+     * "手机响了"这件事在不同的她那里对应到两个不同的对象上 —— 而它们本该是同一条线。
+     *
+     * <p>这也解释了它为什么排在第 5 步这一带: 它的内容(设备、应用)与
+     * {@link #world()} 是同一批东西的两种视角 —— 世界那侧是"东西在哪",
+     * 这一侧是"她能对它做什么"。
+     *
+     * <p>此刻它是空的({@code new CapabilityRegistry()} 里一个能力都没有), 与
+     * {@link #world()} 是同一个状态, 同一条理由: 预置几个能力会让
+     * "没人往世界里注册过东西"与"世界本来就只有这些"变得无法区分。
+     */
+    @Bean
+    public ActionFabric actionFabric() {
+        return new DefaultActionFabric(new CapabilityRegistry());
     }
 
     // ───────────────────── 第 9 步: 环境刷新(取在别处, 用在这里) ─────────────────────
@@ -379,14 +436,76 @@ public class SimulationConfiguration {
         return new WorldRuntime(world, clock, environmentRefreshJob);
     }
 
+    // ───────────────────── 第 7 步: 恢复 + 物化 + 入座 ─────────────────────
+
+    /**
+     * <b>第 5/6/7 步合起来的那一件事</b> —— 把花名册上的人装成活的她, 装回历史, 放进座位表。
+     *
+     * <h2>为什么这三步是一个 bean, 而不是三个</h2>
+     * §8.6.3 把"第 7 步在第 8 步之前"称为<b>这一层唯一一个"错了会毁掉数据"的顺序</b>。
+     * 而这三步之所以不能拆开落地, 原因在 {@code Life} 上: 它<b>自己</b>
+     * {@code new PlanBoard()}, 而且今天<b>没有</b>装载一版计划的入口 —— 于是
+     * "先装一个空白的她、再把历史补上"这条路走不通。恢复因此必须是
+     * <b>装配的前置条件</b>, 不是装配之后的修补: 装出来的那个她, 从第一纳秒起
+     * 就是"装不进历史时宁可拒绝"的那个她({@code RecoveryRuntime} 的拒绝规则)。
+     *
+     * <p>拆成三个 bean 的代价是具体的: 中间那一刻世界上存在一个
+     * <b>装了人却还没装历史</b>的运行时, 而它看起来完全正常 —— 心跳会跳、计数会涨、
+     * 日志会印"装配完成"。所以这里刻意只留一个入口, 让那个中间态<b>不可能被观察到</b>。
+     *
+     * <h2>为什么装配动作发生在 {@code @Bean} 方法体里</h2>
+     * 因为"第 7 步在第 8 步之前"要成为一条 <b>DI 边</b>而不是一条注释。
+     * {@link #simulationTick} 把本 bean 声明成构造依赖, 于是 Spring 必须先造出本 bean
+     * —— 而造它的那一刻 {@code recover()} 就跑完了。谁把那条参数删掉,
+     * {@code SimulationConfigurationTest} 会红。
+     *
+     * <p>这正是 §8.6.3 那张表里"Spring 看不见的"那两行之一:
+     * "tick 壳拿到的 {@code WorldRuntime} 已经建好"是 Spring 保证的,
+     * 而"壳什么时候开始跑"不是 —— 它现在由这条边保证。
+     */
+    @Bean
+    public RecoveryRuntime recoveryRuntime(WorldRuntime runtime,
+                                          AgentRegistry agents,
+                                          EffectLedgerStore ledgers,
+                                          PlanStore plans,
+                                          ActivityStore activities,
+                                          SimulationClock clock,
+                                          ActionFabric actionFabric,
+                                          LiveHumanRegistry live) {
+        RecoveryRuntime recovery = new RecoveryRuntime(
+                runtime, agents, ledgers, plans, activities, clock, actionFabric, live);
+        recovery.recover();
+        return recovery;
+    }
+
     // ───────────────────── 第 8 步: tick 壳 ─────────────────────
 
     /**
      * 心跳壳。它<b>最后</b>被造出来, 也最后开始跑 —— 而"开始跑"这件事由
      * {@code SmartLifecycle} 的相位决定, 不由 bean 的创建顺序决定。
+     *
+     * <h2>那个 {@code recovery} 参数不是给构造器用的</h2>
+     * {@link SimulationTick} 的构造器只收前两个参数, 而第三个参数存在<b>唯一</b>的理由是
+     * 让"恢复必须在心跳之前跑完"成为一条 <b>Spring 能看见的依赖边</b>:
+     *
+     * <pre>
+     *   有这条边: 造壳之前 Spring 必须先造 RecoveryRuntime, 而它的构造过程里
+     *             recover() 已经跑完 —— 心跳第一次跳的时候, 世界上的人与历史都是静止的
+     *   没有它:   两个 bean 谁先被造出来取决于注册顺序(§8.6.3 的表里
+     *             "Spring 看不见的"那一行), 于是恢复可能读到一份正在被推进的状态
+     * </pre>
+     *
+     * <p>{@code Objects.requireNonNull} 写在这里不是为了防御 —— 是为了让这个参数
+     * <b>有实质作用</b>: 一条“传进来但谁也不读”的参数会被 IDE 标成未使用,
+     * 而下一个"清理未使用参数"的人会顺手删掉它, 于是那条边静默消失。
+     * 一句空的检查让删掉它变成一次<b>会编译过但会红测试</b>的改动。
      */
     @Bean
-    public SimulationTick simulationTick(WorldRuntime runtime, SimulationProperties properties) {
+    public SimulationTick simulationTick(WorldRuntime runtime, SimulationProperties properties,
+                                         RecoveryRuntime recovery) {
+        java.util.Objects.requireNonNull(recovery,
+                "心跳壳必须依赖恢复 —— 这条参数是 §8.6.3 '第 7 步在第 8 步之前'那条 DI 边, "
+                        + "见本方法的注释");
         return new SimulationTick(runtime, properties);
     }
 
@@ -404,11 +523,20 @@ public class SimulationConfiguration {
                                          World world,
                                          WorldRuntime runtime,
                                          AgentRegistry agents,
+                                         RecoveryRuntime recoveryRuntime,
                                          SimulationProperties properties) {
-        // 恢复那一段现在是零 —— 因为恢复本身(§8.5.6)还没落地。写零而不是省略,
-        // 是为了让这一行的形状<b>今天就是对的</b>: 一个"少一段"的日志会让人以为
-        // 那一段是最近才加的, 而零会说"它现在确实是空的"。
-        StartupSummary.Recovery recovery = new StartupSummary.Recovery(0, 0, 0, 0);
+        // 恢复那一段现在是**真的**: 账本条数、替身数、拒绝入座数都来自刚才那一轮恢复。
+        //
+        // 仍然有两个数是写死的零, 而它们各自缺的东西不一样(见 RecoveryRuntime 那张表):
+        //   planItems   —— 必然与 refusedAgents 互补。有计划存量的 agent 会被拒绝入座,
+        //                  所以"装进来的计划项"永远是 0, 直到 Life 有了装载入口;
+        //   historyDays —— world_event 表还没有生产者, 而 World 没有 id,
+        //                  所以"世界历史覆盖了几天"这个问题今天没有被问过。
+        // 写成零而不是省略: 一个"少一段"的日志会让人以为那一段是最近才加的,
+        // 而零会说"它现在确实是空的"。
+        RecoveryRuntime.Report r = recoveryRuntime.report();
+        StartupSummary.Recovery recovery = new StartupSummary.Recovery(
+                r.ledgerEntries(), r.opaqueEntries(), 0, 0, r.refused());
 
         // 座位数与应当跑的人数并排报 —— 单看座位那个数分不出
         // "库里还没有人"与"有人而没被装进来", 而这两件事要做的事完全不同。
@@ -428,6 +556,7 @@ public class SimulationConfiguration {
         log.info(summary.describe());
         summary.conflictWarning().ifPresent(log::warn);
         summary.rosterWarning().ifPresent(log::warn);
+        summary.recoveryWarning().ifPresent(log::warn);
         return summary;
     }
 }
