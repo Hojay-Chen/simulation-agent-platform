@@ -14,7 +14,12 @@
 //     OutboxRelayJob 消费 —— OutboxPublisher/Repository 在这边是消费侧。
 
 dependencies {
-    api 'com.luxera:contract:1.0.1'
+    // 1.0.2 是 HttpChatPlatformGateway 的前置条件: 客户端面推来的通知信号从这一版起带
+    // unreadCount(手机的未读快照)。1.0.1 的信封里没有它, 而仓 2 自己数会在免打扰的会话、
+    // 超出补发容量的信号、平台重启这三处漏 —— 漏的表现是红点偏小, 与"没有新消息"无法区分。
+    // 升级之后仍需重启仓 1 的 8091 服务, 否则对面发过来的还是 1.0.1 的 JSON, 而适配器会在
+    // unreadCount == null 上响亮地拒绝那一条(刻意不当成 0)。
+    api 'com.luxera:contract:1.0.2'
     api 'org.springframework.boot:spring-boot-starter-web'
     api 'org.springframework.boot:spring-boot-starter-data-jpa'
     implementation 'org.springframework.boot:spring-boot-starter-security'
